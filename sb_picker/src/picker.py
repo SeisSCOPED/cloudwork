@@ -52,7 +52,7 @@ def main():
     parser.add_argument("--p_threshold", default=0.2, type=float)
     parser.add_argument("--s_threshold", default=0.2, type=float)
     parser.add_argument("--data_queue_size", default=5, type=int)
-    parser.add_argument("--data_queue_size", default=5, type=int)
+    parser.add_argument("--pick_queue_size", default=5, type=int)
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
@@ -81,6 +81,12 @@ class S3MongoSBPicker:
         debug: bool = False,
     ):
         if debug:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            )
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
             logger.setLevel(logging.DEBUG)
 
         self.model = self.create_model(model, weight, p_threshold, s_threshold)
@@ -102,7 +108,7 @@ class S3MongoSBPicker:
             "p_threshold": p_threshold,
             "s_threshold": s_threshold,
             "components_loaded": components,
-            "seisbench_version": seisbench.__version,
+            "seisbench_version": seisbench.__version__,
             "weight_version": self.model.weights_version,
         }
 
@@ -140,12 +146,11 @@ class S3MongoSBPicker:
 
     def run(self):
         days = np.arange(self.start, self.end, datetime.timedelta(days=1))
-
         tasks = asyncio.Queue()
         for station in self.stations:
             for day in days:
-                tasks.put((station, day))
-        tasks.put(None)
+                tasks.put_nowait((station, day))
+        tasks.put_nowait(None)
 
         asyncio.run(self._run_async(tasks))
 
@@ -175,8 +180,11 @@ class S3MongoSBPicker:
             logger.debug(f"Loading {station} - {date}")
 
             stream = obspy.Stream()
-            for uri in self._generate_waveform_uris(station, date):
+            for uri in self._generate_waveform_uris(
+                station, date.astype(datetime.datetime)
+            ):
                 stream += await asyncio.to_thread(self._read_from_s3, fs, uri)
+            await data.put(stream)
 
     @staticmethod
     def _read_from_s3(fs, uri) -> obspy.Stream:
@@ -193,7 +201,9 @@ class S3MongoSBPicker:
             year = date.strftime("%Y")
             day = date.strftime("%j")
             for c in self.components:
-                f"ncedc-pds/continuous_waveforms/{net}/{year}/{year}.{day}/{sta}.{net}.{cha}{c}.{loc}.D.{year}.{day}"
+                uris.append(
+                    f"{self.s3}/continuous_waveforms/{net}/{year}/{year}.{day}/{sta}.{net}.{cha}{c}.{loc}.D.{year}.{day}"
+                )
         else:
             raise NotImplementedError(f"Format '{format}' unknown.")
 
@@ -240,7 +250,7 @@ class S3MongoSBPicker:
                     {
                         "trace_id": pick.trace_id,
                         "time": pick.peak_time.datetime,
-                        "confidence": pick.peak_value,
+                        "confidence": float(pick.peak_value),
                         "phase": pick.phase,
                         **self.metadata,
                     }
