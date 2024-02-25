@@ -1,12 +1,14 @@
 import argparse
 import asyncio
 import datetime
+import itertools
 import logging
-import time
+import re
 from typing import Any, Iterable, Mapping, Optional
 
 import numpy as np
 import obspy
+import pandas as pd
 import pymongo
 import seisbench
 import seisbench.models as sbm
@@ -14,8 +16,8 @@ import seisbench.util as sbu
 from bson import ObjectId
 from pymongo.collection import Collection
 from pymongo.errors import BulkWriteError, DuplicateKeyError
-from pymongo.results import InsertOneResult
 from s3fs import S3FileSystem
+from tqdm import tqdm
 
 logger = logging.getLogger("sb_picker")
 
@@ -26,6 +28,7 @@ def parse_year_day(x: str) -> datetime.date:
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("command", type=str)
     parser.add_argument("--s3", type=str, required=True)
     parser.add_argument("--s3_format", type=str, default="ncedc")
     parser.add_argument("--db_uri", type=str, required=True)
@@ -35,19 +38,19 @@ def main():
     parser.add_argument(
         "--stations",
         type=str,
-        required=True,
+        required=False,
         help="Stations (comma separated) in format NET.STA.LOC.CHA without component.",
     )
     parser.add_argument(
         "--start",
         type=parse_year_day,
-        required=True,
+        required=False,
         help="Format: YYYY.DDD (included)",
     )
     parser.add_argument(
         "--end",
         type=parse_year_day,
-        required=True,
+        required=False,
         help="Format: YYYY.DDD (not included)",
     )
     parser.add_argument("--components", type=str, default="ZNE12")
@@ -71,9 +74,14 @@ def main():
 
     db = SeisBenchCollection(args.db_uri, args.collection)
     s3 = S3DataSource(
-        args.s3, args.s3_format, args.stations, args.start, args.end, args.components
+        s3=args.s3,
+        s3_format=args.s3_format,
+        stations=args.stations,
+        start=args.start,
+        end=args.end,
+        components=args.components,
     )
-    picker = S3MongoSBPicker(
+    picker = S3MongoSBBridge(
         s3=s3,
         db=db,
         model=args.model,
@@ -84,7 +92,12 @@ def main():
         pick_queue_size=args.pick_queue_size,
     )
 
-    picker.run()
+    if args.command == "pick":
+        picker.run_picking()
+    elif args.command == "station_list":
+        picker.run_station_listing()
+    else:
+        raise ValueError(f"Unknown command '{args.command}'")
 
 
 class SeisBenchCollection(pymongo.MongoClient):
@@ -104,6 +117,10 @@ class SeisBenchCollection(pymongo.MongoClient):
                 ["trace_id", "phase", "time"], unique=True, name="unique_index"
             )
 
+        station_db = self["stations"]
+        if "station_idx" not in station_db.index_information():
+            station_db.create_index(["id"], unique=True, name="station_idx")
+
     def __getitem__(self, item) -> Collection[Mapping[str, Any] | Any]:
         if item not in self.dbs:
             raise KeyError(
@@ -118,19 +135,24 @@ class S3DataSource:
         self,
         s3: str,
         s3_format: str,
-        stations: str,
-        start: datetime.date,
-        end: datetime.date,
-        components: str,
+        start: Optional[datetime.date] = None,
+        end: Optional[datetime.date] = None,
+        stations: Optional[str] = None,
+        components: str = "ZNE12",
+        channels: str = "HH?,BH?,EH?,HN?,BN?,EN?,HL?,BL?,EL?",  # Only for station parsing
     ):
         self.s3 = s3
         self.s3_format = s3_format
         self.start = start
         self.end = end
         self.components = components
-        self.stations = stations.split(",")
+        if stations is None:
+            self.stations = []
+        else:
+            self.stations = stations.split(",")
+        self.channels = channels.split(",")
 
-    def load_data(self) -> obspy.Stream:
+    def load_waveforms(self) -> obspy.Stream:
         days = np.arange(self.start, self.end, datetime.timedelta(days=1))
         fs = S3FileSystem(anon=True)
 
@@ -141,11 +163,78 @@ class S3DataSource:
                 for uri in self._generate_waveform_uris(
                     station, day.astype(datetime.datetime)
                 ):
-                    stream += self._read_from_s3(fs, uri)
+                    stream += self._read_waveform_from_s3(fs, uri)
                 yield stream
 
+    def get_available_stations(self) -> pd.DataFrame:
+        fs = S3FileSystem(anon=True)
+        logger.debug("Listing station URIs")
+        networks = fs.ls(f"{self.s3}/FDSNstationXML/")[1:]
+        station_uris = []
+        for net in networks:
+            station_uris += fs.ls(net)[1:]
+
+        logger.debug("Parsing station inventories")
+        stations = []
+        for uri in tqdm(station_uris):
+            with fs.open(uri) as f:
+                inv = obspy.read_inventory(f)
+
+            for net in inv:
+                for sta in net:
+                    locs = {cha.location_code for cha in sta}
+                    for loc in locs:
+                        channels = ",".join(
+                            sorted(
+                                {
+                                    cha.code
+                                    for cha in sta.select(location=loc)
+                                    if self._check_channel(cha.code)
+                                }
+                            )
+                        )
+                        if channels == "":
+                            continue
+
+                        stations.append(
+                            {
+                                "network_code": net.code,
+                                "station_code": sta.code,
+                                "location_code": loc,
+                                "channels": channels,
+                                "id": f"{net.code}.{sta.code}.{loc}",
+                                "latitude": sta.latitude,
+                                "longitude": sta.longitude,
+                                "elevation": sta.elevation,
+                            }
+                        )
+
+        stations = pd.DataFrame(stations)
+
+        def unify(x):
+            channels = itertools.chain.from_iterable(
+                channels.split(",") for channels in x["channels"]
+            )
+            channels = ",".join(sorted(list(set(channels))))
+            out = x.iloc[0].copy()
+            out["channels"] = channels
+            return out
+
+        stations = (
+            stations.groupby("id").apply(unify, include_groups=False).reset_index()
+        )
+
+        return stations
+
+    def _check_channel(self, channel: str) -> bool:
+        for pattern in self.channels:
+            pattern = pattern.replace("?", ".?").replace("*", ".*")
+            if re.fullmatch(pattern, channel):
+                return True
+        return False
+
     @staticmethod
-    def _read_from_s3(fs, uri) -> obspy.Stream:
+    def _read_waveform_from_s3(fs, uri) -> obspy.Stream:
         try:
             with fs.open(uri) as f:
                 return obspy.read(f)
@@ -168,35 +257,36 @@ class S3DataSource:
         return uris
 
 
-class S3MongoSBPicker:
+class S3MongoSBBridge:
     def __init__(
         self,
         s3: S3DataSource,
         db: SeisBenchCollection,
-        model: str,
-        weight: str,
-        p_threshold: float,
-        s_threshold: float,
-        data_queue_size: Optional[int],
-        pick_queue_size: Optional[int],
+        model: Optional[str] = None,
+        weight: Optional[str] = None,
+        p_threshold: Optional[float] = None,
+        s_threshold: Optional[float] = None,
+        data_queue_size: Optional[int] = None,
+        pick_queue_size: Optional[int] = None,
     ):
-        self.model = self.create_model(model, weight, p_threshold, s_threshold)
+        if model is not None:
+            self.model = self.create_model(model, weight, p_threshold, s_threshold)
 
-        self.s3 = s3
-        self.db = db
+            self.s3 = s3
+            self.db = db
 
-        self.data_queue_size = data_queue_size
-        self.pick_queue_size = pick_queue_size
+            self.data_queue_size = data_queue_size
+            self.pick_queue_size = pick_queue_size
 
-        self._run_id = self._put_run_data(
-            model=model,
-            weight=weight,
-            p_threshold=p_threshold,
-            s_threshold=s_threshold,
-            components_loaded=s3.components,
-            seisbench_version=seisbench.__version__,
-            weight_version=self.model.weights_version,
-        )
+            self._run_id = self._put_run_data(
+                model=model,
+                weight=weight,
+                p_threshold=p_threshold,
+                s_threshold=s_threshold,
+                components_loaded=s3.components,
+                seisbench_version=seisbench.__version__,
+                weight_version=self.model.weights_version,
+            )
 
     def _put_run_data(self, **kwargs: Any) -> ObjectId:
         kwargs["timestamp"] = datetime.datetime.now(datetime.timezone.utc)
@@ -211,10 +301,26 @@ class S3MongoSBPicker:
         model.default_args["S_threshold"] = s_threshold
         return model
 
-    def run(self):
-        asyncio.run(self._run_async())
+    def run_station_listing(self):
+        stations = self.s3.get_available_stations()
+        logger.debug("Writing station information to DB")
+        try:
+            self.db["stations"].insert_many(
+                stations.to_dict("records"),
+                ordered=False,  # Not ordered to make sure every query is sent
+            )
+        except DuplicateKeyError:
+            logger.warning("Some duplicate entries have been skipped.")
+        except BulkWriteError as e:
+            if all(x["code"] == 11000 for x in e.details["writeErrors"]):
+                logger.warning("Some duplicate entries have been skipped.")
+            else:
+                raise e
 
-    async def _run_async(self):
+    def run_picking(self):
+        asyncio.run(self._run_picking_async())
+
+    async def _run_picking_async(self):
         data = asyncio.Queue(self.data_queue_size)
         picks = asyncio.Queue(self.pick_queue_size)
 
@@ -228,7 +334,7 @@ class S3MongoSBPicker:
         self,
         data: asyncio.Queue[obspy.Stream | None],
     ):
-        for stream in self.s3.load_data():
+        for stream in self.s3.load_waveforms():
             await data.put(stream)
 
         await data.put(None)
