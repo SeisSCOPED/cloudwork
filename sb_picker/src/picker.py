@@ -7,6 +7,7 @@ import logging
 import re
 from typing import Any, AsyncIterator, Iterable, Mapping, Optional
 
+import boto3
 import numpy as np
 import obspy
 import pandas as pd
@@ -116,6 +117,8 @@ def main():
         picker.run_association(args.start, args.end)
     elif args.command == "pick_jobs":
         picker.get_pick_jobs()
+    elif args.command == "submit_jobs":
+        picker.submit_jobs()
     else:
         raise ValueError(f"Unknown command '{args.command}'")
 
@@ -125,6 +128,7 @@ class SeisBenchCollection(pymongo.MongoClient):
         super().__init__(db_uri, **kwargs)
 
         self.db_uri = db_uri
+        self.collection = collection
         self._collection = super().__getitem__(collection)
 
         self.dbs = {"picks", "stations", "sb_runs", "events", "assignments"}
@@ -320,6 +324,9 @@ class S3MongoSBBridge:
 
         self.data_queue_size = data_queue_size
         self.pick_queue_size = pick_queue_size
+
+        self.station_group_size = 8
+        self.day_group_size = 2
 
         self._run_id = None
 
@@ -558,6 +565,65 @@ class S3MongoSBBridge:
         stations = self._get_stations()
         logger.debug(f"Found {len(stations)} jobs")
         print(",".join(stations["id"]))
+
+    def submit_jobs(self) -> None:
+        stations = self._get_stations()
+        days = np.arange(self.s3.start, self.s3.end, datetime.timedelta(days=1))
+        logger.debug(f"Starting jobs for {len(stations)} stations and {len(days)} days")
+
+        client = boto3.client("batch")
+
+        shared_parameters = {
+            "db_uri": self.db.db_uri,
+            "collection": self.db.collection,
+        }
+
+        i = 0
+        while i < len(days) - 1:
+            day0 = days[i].astype(datetime.datetime).strftime("%Y.%j")
+            day1 = (
+                days[min(i + self.day_group_size, len(days) - 1)]
+                .astype(datetime.datetime)
+                .strftime("%Y.%j")
+            )
+
+            pick_jobs = []
+            j = 0
+            while j < len(stations) - 1:
+                sub_stations = ",".join(
+                    stations["id"].iloc[j : j + self.station_group_size]
+                )
+                parameters = {"start": day0, "end": day1, "stations": sub_stations}
+
+                logger.debug(f"Submitting pick job with: {parameters}")
+                pick_jobs.append(
+                    client.submit_job(
+                        jobName=f"munchmeyer_picking_{i}_{j}",
+                        jobQueue="munchmeyer_fargate_picking_queue",
+                        jobDefinition="munchmeyer_fargate_picking_v2",
+                        parameters={**parameters, **shared_parameters},
+                    )
+                )
+
+                j += self.station_group_size
+
+            extent = ",".join([str(x) for x in self.extent])
+            parameters = {"start": day0, "end": day1, "extent": extent}
+            logger.debug(f"Submitting association job with: {parameters}")
+            dependencies = [
+                {"jobId": job["jobId"], "type": "SEQUENTIAL"} for job in pick_jobs
+            ]
+            pick_jobs.append(
+                client.submit_job(
+                    jobName=f"munchmeyer_association_{i}",
+                    jobQueue="munchmeyer_fargate_picking_queue",
+                    jobDefinition="munchmeyer_fargate_association",
+                    dependsOn=dependencies,
+                    parameters={**parameters, **shared_parameters},
+                )
+            )
+
+            i += self.day_group_size
 
 
 if __name__ == "__main__":
