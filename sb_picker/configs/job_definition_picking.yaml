@@ -1,0 +1,42 @@
+jobDefinitionName: '' # [REQUIRED] Specify a name for the job definition to register.
+type: container
+parameters: {} # These parameters will be overwritten
+containerProperties:
+  image: yetinam/seisbench-scoped
+  jobRoleArn: '' # [REQUIRED] The Amazon Resource Name (ARN) of the IAM role that the container can assume for AWS permissions.
+  executionRoleArn: '' # [REQUIRED] The Amazon Resource Name (ARN) of the IAM role that the Amazon ECS container agent and the Docker daemon can assume.
+  command:
+  - pick
+  - "--s3"
+  - ncedc-pds
+  - "--db_uri"
+  - Ref::db_uri
+  - "--collection"
+  - Ref::collection
+  - "--stations"
+  - Ref::stations
+  - "--start"
+  - Ref::start
+  - "--end"
+  - Ref::end
+  - "--debug"
+  resourceRequirements: # The type and amount of resources to assign to a container.
+  - value: '4'
+    type: VCPU
+  - value: '8192'
+    type: MEMORY
+  secrets: []
+  networkConfiguration:
+    assignPublicIp: ENABLED
+    interfaceConfigurations: []
+  fargatePlatformConfiguration:
+    platformVersion: LATEST
+  runtimePlatform:
+    operatingSystemFamily: LINUX
+    cpuArchitecture: X86_64
+timeout:
+  attemptDurationSeconds: 6000
+tags: {}
+platformCapabilities:
+- FARGATE
+containerOrchestrationType: ECS

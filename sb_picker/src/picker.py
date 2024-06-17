@@ -1,3 +1,7 @@
+JOB_QUEUE = ""  # Required
+JOB_DEFINITION_PICKING = ""  # [REQUIRED]
+JOB_DEFINITION_ASSOCIATION = ""  # [REQUIRED]
+
 import argparse
 import asyncio
 import datetime
@@ -599,8 +603,8 @@ class S3MongoSBBridge:
                 pick_jobs.append(
                     client.submit_job(
                         jobName=f"munchmeyer_picking_{i}_{j}",
-                        jobQueue="munchmeyer_fargate_picking_queue",
-                        jobDefinition="munchmeyer_fargate_picking_v2",
+                        jobQueue=JOB_QUEUE,
+                        jobDefinition=JOB_DEFINITION_PICKING,
                         parameters={**parameters, **shared_parameters},
                     )
                 )
@@ -616,8 +620,8 @@ class S3MongoSBBridge:
             pick_jobs.append(
                 client.submit_job(
                     jobName=f"munchmeyer_association_{i}",
-                    jobQueue="munchmeyer_fargate_picking_queue",
-                    jobDefinition="munchmeyer_fargate_association",
+                    jobQueue=JOB_QUEUE,
+                    jobDefinition=JOB_DEFINITION_ASSOCIATION,
                     dependsOn=dependencies,
                     parameters={**parameters, **shared_parameters},
                 )
