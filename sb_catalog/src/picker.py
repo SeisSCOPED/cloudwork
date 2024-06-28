@@ -1,7 +1,3 @@
-JOB_QUEUE = ""  # Required
-JOB_DEFINITION_PICKING = ""  # [REQUIRED]
-JOB_DEFINITION_ASSOCIATION = ""  # [REQUIRED]
-
 import argparse
 import asyncio
 import datetime
@@ -9,23 +5,24 @@ import functools
 import itertools
 import logging
 import re
-from typing import Any, AsyncIterator, Iterable, Mapping, Optional
+from typing import Any, AsyncIterator, Optional
 
 import boto3
 import numpy as np
 import obspy
 import pandas as pd
-import pymongo
 import pyocto
 import seisbench
 import seisbench.models as sbm
 import seisbench.util as sbu
 from bson import ObjectId
-from pymongo.collection import Collection
 from pymongo.errors import BulkWriteError, DuplicateKeyError
 from pymongo.results import InsertManyResult
 from s3fs import S3FileSystem
 from tqdm import tqdm
+
+from .parameters import JOB_DEFINITION_ASSOCIATION, JOB_DEFINITION_PICKING, JOB_QUEUE
+from .util import SeisBenchCollection
 
 logger = logging.getLogger("sb_picker")
 
@@ -125,37 +122,6 @@ def main():
         picker.submit_jobs()
     else:
         raise ValueError(f"Unknown command '{args.command}'")
-
-
-class SeisBenchCollection(pymongo.MongoClient):
-    def __init__(self, db_uri: str, collection: str, **kwargs: Any) -> None:
-        super().__init__(db_uri, **kwargs)
-
-        self.db_uri = db_uri
-        self.collection = collection
-        self._collection = super().__getitem__(collection)
-
-        self.dbs = {"picks", "stations", "sb_runs", "events", "assignments"}
-        self._setup()
-
-    def _setup(self):
-        pick_db = self["picks"]
-        if "unique_index" not in pick_db.index_information():
-            pick_db.create_index(
-                ["trace_id", "phase", "time"], unique=True, name="unique_index"
-            )
-
-        station_db = self["stations"]
-        if "station_idx" not in station_db.index_information():
-            station_db.create_index(["id"], unique=True, name="station_idx")
-
-    def __getitem__(self, item) -> Collection[Mapping[str, Any] | Any]:
-        if item not in self.dbs:
-            raise KeyError(
-                f"Database '{item}' not available. Possible options are: "
-                + ", ".join(self.dbs)
-            )
-        return self._collection[item]
 
 
 class S3DataSource:
@@ -367,12 +333,12 @@ class S3MongoSBBridge:
 
     def _write_stations_to_db(self, stations):
         logger.debug("Writing station information to DB")
-        self._insert_many_ignore_duplicates("stations", stations.to_dict("records"))
+        self.db.insert_many_ignore_duplicates("stations", stations.to_dict("records"))
 
     def run_association(self, t0: datetime.datetime, t1: datetime.datetime):
         t0 = self._date_to_datetime(t0)
         t1 = self._date_to_datetime(t1)
-        stations = self._get_stations()
+        stations = self.db.get_stations(self.extent)
         logger.debug(
             f"Associating {len(stations)} stations: " + ",".join(stations["id"].values)
         )
@@ -428,7 +394,7 @@ class S3MongoSBBridge:
     ) -> None:
         # Put events and get mongodb ids, replace event and pick ids with their mongodb counterparts,
         # write assignments to database
-        event_result = self._insert_many_ignore_duplicates(
+        event_result = self.db.insert_many_ignore_duplicates(
             "events", events.to_dict("records")
         )
 
@@ -451,18 +417,6 @@ class S3MongoSBBridge:
         merged = merged[["event_id", "pick_id"]]
 
         self.db["assignments"].insert_many(merged.to_dict("records"))
-
-    def _get_stations(self) -> pd.DataFrame:
-        minlat, maxlat, minlon, maxlon = self.extent
-
-        cursor = self.db["stations"].find(
-            {
-                "latitude": {"$gt": minlat, "$lt": maxlat},
-                "longitude": {"$gt": minlon, "$lt": maxlon},
-            }
-        )
-
-        return pd.DataFrame(list(cursor))
 
     def _load_picks(
         self, station_ids: list[str], t0: datetime.datetime, t1: datetime.datetime
@@ -533,7 +487,7 @@ class S3MongoSBBridge:
             await asyncio.to_thread(self._write_single_picklist_to_db, stream_picks)
 
     def _write_single_picklist_to_db(self, picks: sbu.PickList) -> None:
-        self._insert_many_ignore_duplicates(
+        self.db.insert_many_ignore_duplicates(
             "picks",
             [
                 {
@@ -547,31 +501,13 @@ class S3MongoSBBridge:
             ],
         )
 
-    def _insert_many_ignore_duplicates(
-        self, key: str, entries: list[dict[str, Any]]
-    ) -> InsertManyResult:
-        try:
-            return self.db[key].insert_many(
-                entries,
-                ordered=False,  # Not ordered to make sure every query is sent
-            )
-        except DuplicateKeyError:
-            logger.warning(
-                f"Some duplicate entries have been skipped while writing to DB '{key}'."
-            )
-        except BulkWriteError as e:
-            if all(x["code"] == 11000 for x in e.details["writeErrors"]):
-                logger.warning("Some duplicate entries have been skipped.")
-            else:
-                raise e
-
     def get_pick_jobs(self) -> None:
-        stations = self._get_stations()
+        stations = self.db.get_stations(self.extent)
         logger.debug(f"Found {len(stations)} jobs")
         print(",".join(stations["id"]))
 
     def submit_jobs(self) -> None:
-        stations = self._get_stations()
+        stations = self.db.get_stations(self.extent)
         days = np.arange(self.s3.start, self.s3.end, datetime.timedelta(days=1))
         logger.debug(f"Starting jobs for {len(stations)} stations and {len(days)} days")
 
