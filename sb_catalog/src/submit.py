@@ -1,3 +1,4 @@
+import argparse
 import datetime
 import logging
 
@@ -8,6 +9,11 @@ from .parameters import JOB_DEFINITION_ASSOCIATION, JOB_DEFINITION_PICKING, JOB_
 from .util import SeisBenchCollection
 
 logger = logging.getLogger("sb_picker")
+handler = logging.StreamHandler()
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+logger.setLevel(logging.DEBUG)
 
 
 class SubmitHelper:
@@ -97,3 +103,41 @@ class SubmitHelper:
             )
 
             i += self.day_group_size
+
+
+def parse_year_day(x: str) -> datetime.date:
+    return datetime.datetime.strptime(x, "%Y.%j").date()
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "start",
+        type=parse_year_day,
+        help="Format: YYYY.DDD (included)",
+    )
+    parser.add_argument(
+        "end",
+        type=parse_year_day,
+        help="Format: YYYY.DDD (not included)",
+    )
+    parser.add_argument(
+        "extent",
+        type=str,
+        help="Comma separated: minlat, maxlat, minlon, maxlon",
+    )
+    parser.add_argument("db_uri", type=str)
+    parser.add_argument("--collection", type=str, default="tutorial")
+
+    args = parser.parse_args()
+
+    extent = tuple([float(x) for x in args.extent.split(",")])
+    assert len(extent) == 4, "Extent needs to be exactly 4 coordinates"
+
+    db = SeisBenchCollection(args.db_uri, args.collection)
+    helper = SubmitHelper(start=args.start, end=args.end, extent=extent, db=db)
+    helper.submit_jobs()
+
+
+if __name__ == "__main__":
+    main()

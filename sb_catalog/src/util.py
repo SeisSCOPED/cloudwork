@@ -43,7 +43,7 @@ class SeisBenchCollection(pymongo.MongoClient):
     def get_stations(self, extent: tuple[float, float, float, float]) -> pd.DataFrame:
         minlat, maxlat, minlon, maxlon = extent
 
-        cursor = self.db["stations"].find(
+        cursor = self["stations"].find(
             {
                 "latitude": {"$gt": minlat, "$lt": maxlat},
                 "longitude": {"$gt": minlon, "$lt": maxlon},

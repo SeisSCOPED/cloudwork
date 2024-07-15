@@ -28,7 +28,6 @@ containerProperties:
   secrets: []
   networkConfiguration:
     assignPublicIp: ENABLED
-    interfaceConfigurations: []
   fargatePlatformConfiguration:
     platformVersion: LATEST
   runtimePlatform:
@@ -39,4 +38,3 @@ timeout:
 tags: {}
 platformCapabilities:
 - FARGATE
-containerOrchestrationType: ECS

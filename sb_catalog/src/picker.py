@@ -16,8 +16,6 @@ import seisbench
 import seisbench.models as sbm
 import seisbench.util as sbu
 from bson import ObjectId
-from pymongo.errors import BulkWriteError, DuplicateKeyError
-from pymongo.results import InsertManyResult
 from s3fs import S3FileSystem
 from tqdm import tqdm
 
@@ -245,7 +243,9 @@ class S3DataSource:
         try:
             with fs.open(uri) as f:
                 return obspy.read(f)
-        except FileNotFoundError:
+        except FileNotFoundError:  # File does not exist
+            return obspy.Stream()
+        except ValueError:  # Raised for certain types of corrupt files
             return obspy.Stream()
 
     def _generate_waveform_uris(
