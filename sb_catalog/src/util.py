@@ -11,6 +11,11 @@ logger = logging.getLogger("sb_picker")
 
 
 class SeisBenchCollection(pymongo.MongoClient):
+    """
+    A MongoDB Client designed to handle all necessary tables for creating a simple earthquake catalog.
+    It provides useful helper functions and a structure.
+    """
+
     def __init__(self, db_uri: str, collection: str, **kwargs: Any) -> None:
         super().__init__(db_uri, **kwargs)
 
@@ -21,7 +26,11 @@ class SeisBenchCollection(pymongo.MongoClient):
         self.dbs = {"picks", "stations", "sb_runs", "events", "assignments"}
         self._setup()
 
-    def _setup(self):
+    def _setup(self) -> None:
+        """
+        Setup indices for the main tables for faster access.
+        Tables are generally created lazily.
+        """
         pick_db = self["picks"]
         if "unique_index" not in pick_db.index_information():
             pick_db.create_index(
@@ -41,6 +50,9 @@ class SeisBenchCollection(pymongo.MongoClient):
         return self._collection[item]
 
     def get_stations(self, extent: tuple[float, float, float, float]) -> pd.DataFrame:
+        """
+        Returns a DataFrame with all stations within the given range.
+        """
         minlat, maxlat, minlon, maxlon = extent
 
         cursor = self["stations"].find(
@@ -55,6 +67,10 @@ class SeisBenchCollection(pymongo.MongoClient):
     def insert_many_ignore_duplicates(
         self, key: str, entries: list[dict[str, Any]]
     ) -> InsertManyResult:
+        """
+        Inserts many keys into a table while ignoring any duplicates.
+        All other errors in inserting the data are passed to the user.
+        """
         try:
             return self[key].insert_many(
                 entries,

@@ -29,12 +29,24 @@ def parse_year_day(x: str) -> datetime.date:
     return datetime.datetime.strptime(x, "%Y.%j").date()
 
 
-def main():
+def main() -> None:
+    """
+    This main function serves as the entry point to all functionality available in the script.
+    """
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", type=str)
-    parser.add_argument("--s3", type=str, required=True)
-    parser.add_argument("--s3_format", type=str, default="ncedc")
-    parser.add_argument("--db_uri", type=str, required=True)
+    parser.add_argument(
+        "command", type=str
+    )  # Subroutine to execute. See below for acailable functions.
+    parser.add_argument("--s3", type=str, required=True, help="URI of the S3 bucket")
+    parser.add_argument(
+        "--s3_format",
+        type=str,
+        default="ncedc",
+        help="Format of the seismic data store. Only NCEDC is supported at the moment.",
+    )
+    parser.add_argument(
+        "--db_uri", type=str, required=True, help="URI of the MongoDB database"
+    )
     parser.add_argument(
         "--collection", type=str, required=True, help="The collection for MongoDB"
     )
@@ -62,17 +74,39 @@ def main():
         required=False,
         help="Comma separated: minlat, maxlat, minlon, maxlon",
     )
-    parser.add_argument("--components", type=str, default="ZNE12")
-    parser.add_argument("--model", type=str, default="PhaseNet")
-    parser.add_argument("--weight", type=str, default="instance")
-    parser.add_argument("--p_threshold", default=0.2, type=float)
-    parser.add_argument("--s_threshold", default=0.2, type=float)
-    parser.add_argument("--data_queue_size", default=5, type=int)
-    parser.add_argument("--pick_queue_size", default=5, type=int)
-    parser.add_argument("--debug", action="store_true")
+    parser.add_argument(
+        "--components", type=str, default="ZNE12", help="Components to scan"
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="PhaseNet",
+        help="Model type. Must be available in SeisBench.",
+    )
+    parser.add_argument(
+        "--weight",
+        type=str,
+        default="instance",
+        help="Model weights to load through SeisBench from_pretrained.",
+    )
+    parser.add_argument(
+        "--p_threshold", default=0.2, type=float, help="Picking threshold for P waves"
+    )
+    parser.add_argument(
+        "--s_threshold", default=0.2, type=float, help="Picking threshold for S waves"
+    )
+    parser.add_argument(
+        "--data_queue_size", default=5, type=int, help="Buffer size for data preloading"
+    )
+    parser.add_argument(
+        "--pick_queue_size", default=5, type=int, help="Buffer size for picking results"
+    )
+    parser.add_argument(
+        "--debug", action="store_true", help="Enables additional debug output"
+    )
     args = parser.parse_args()
 
-    if args.debug:
+    if args.debug:  # Setup debug logging
         handler = logging.StreamHandler()
         formatter = logging.Formatter(
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -81,6 +115,7 @@ def main():
         logger.addHandler(handler)
         logger.setLevel(logging.DEBUG)
 
+    # Set up data base for results and data source
     db = SeisBenchCollection(args.db_uri, args.collection)
     s3 = S3DataSource(
         s3=args.s3,
@@ -96,6 +131,7 @@ def main():
         extent = tuple([float(x) for x in args.extent.split(",")])
         assert len(extent) == 4, "Extent needs to be exactly 4 coordinates"
 
+    # Set up main class handling the commands
     picker = S3MongoSBBridge(
         s3=s3,
         db=db,
@@ -123,6 +159,10 @@ def main():
 
 
 class S3DataSource:
+    """
+    This class provides functionality to load waveform data from an S3 bucket.
+    """
+
     def __init__(
         self,
         s3: str,
@@ -145,6 +185,13 @@ class S3DataSource:
         self.channels = channels.split(",")
 
     async def load_waveforms(self) -> AsyncIterator[obspy.Stream]:
+        """
+        Load the waveforms. This function is async to allow loading data in parallel with processing.
+        The function releases the GIL when reading from the S3 bucket.
+        The iterator returns data by station and within each station day by day.
+        Data from all channels of a station is returned simultaneously.
+        This matches the typical access pattern required for single-station phase pickers.
+        """
         days = np.arange(self.start, self.end, datetime.timedelta(days=1))
         fs = S3FileSystem(anon=True)
 
@@ -172,6 +219,10 @@ class S3DataSource:
                     logger.debug(f"Empty stream {station} - {day}")
 
     def get_available_stations(self) -> pd.DataFrame:
+        """
+        List all stations available in the S3 bucket by scanning the StationXML files.
+        Returns station list as a dataframe.
+        """
         fs = S3FileSystem(anon=True)
         logger.debug("Listing station URIs")
         networks = fs.ls(f"{self.s3}/FDSNstationXML/")[1:]
@@ -216,7 +267,10 @@ class S3DataSource:
 
         stations = pd.DataFrame(stations)
 
-        def unify(x):
+        def unify_channel_names(x):
+            """
+            Combines channel names into a string
+            """
             channels = itertools.chain.from_iterable(
                 channels.split(",") for channels in x["channels"]
             )
@@ -226,12 +280,17 @@ class S3DataSource:
             return out
 
         stations = (
-            stations.groupby("id").apply(unify, include_groups=False).reset_index()
+            stations.groupby("id")
+            .apply(unify_channel_names, include_groups=False)
+            .reset_index()
         )
 
         return stations
 
     def _check_channel(self, channel: str) -> bool:
+        """
+        Check whether a channel matches the channel patterns defined in `self.channels`
+        """
         for pattern in self.channels:
             pattern = pattern.replace("?", ".?").replace("*", ".*")
             if re.fullmatch(pattern, channel):
@@ -240,6 +299,9 @@ class S3DataSource:
 
     @staticmethod
     def _read_waveform_from_s3(fs, uri) -> obspy.Stream:
+        """
+        Failure tolerant method for reading data from S3. If an error occurs, an empty stream is returned.
+        """
         try:
             with fs.open(uri) as f:
                 return obspy.read(f)
@@ -251,6 +313,9 @@ class S3DataSource:
     def _generate_waveform_uris(
         self, station: str, channel: str, date: datetime.date
     ) -> list[str]:
+        """
+        Generates a list of S3 uris for the requested data
+        """
         uris = []
         if self.s3_format == "ncedc":
             net, sta, loc = station.split(".")
@@ -267,6 +332,13 @@ class S3DataSource:
 
 
 class S3MongoSBBridge:
+    """
+    This bridge connects an S3DataSource, a MongoDB database (represented by the SeisBenchCollection) and
+    the processing for picking and association (implemented directly in the class).
+    Additional functionality is provided for submitting jobs to AWS Batch, however, these functions are also
+    available separately in submit.py.
+    """
+
     def __init__(
         self,
         s3: S3DataSource,
@@ -302,6 +374,9 @@ class S3MongoSBBridge:
 
     @property
     def run_id(self) -> ObjectId:
+        """
+        A unique run_id that is saved in the database along with the configuration for reproducibility.
+        """
         if self._run_id is None:
             self._run_id = self._put_run_data(
                 model=self.model_name,
@@ -322,12 +397,18 @@ class S3MongoSBBridge:
     def create_model(
         model: str, weight: str, p_threshold: float, s_threshold: float
     ) -> sbm.WaveformModel:
+        """
+        Loads a SeisBench model
+        """
         model = sbm.__getattribute__(model).from_pretrained(weight)
         model.default_args["P_threshold"] = p_threshold
         model.default_args["S_threshold"] = s_threshold
         return model
 
     def run_station_listing(self):
+        """
+        Lists all available stations and writes them to the database.
+        """
         stations = self.s3.get_available_stations()
         self._write_stations_to_db(stations)
 
@@ -336,6 +417,9 @@ class S3MongoSBBridge:
         self.db.insert_many_ignore_duplicates("stations", stations.to_dict("records"))
 
     def run_association(self, t0: datetime.datetime, t1: datetime.datetime):
+        """
+        Runs the phase association for the provided time range and the extent defined in self.extent.
+        """
         t0 = self._date_to_datetime(t0)
         t1 = self._date_to_datetime(t1)
         stations = self.db.get_stations(self.extent)
@@ -385,6 +469,9 @@ class S3MongoSBBridge:
 
     @staticmethod
     def _date_to_datetime(t: datetime.date | datetime.datetime) -> datetime.datetime:
+        """
+        Helper function to homogenize time formats
+        """
         if isinstance(t, datetime.date):
             return datetime.datetime.combine(t, datetime.datetime.min.time())
         return t
@@ -392,6 +479,10 @@ class S3MongoSBBridge:
     def _write_events_to_db(
         self, events: pd.DataFrame, assignments: pd.DataFrame, picks: pd.DataFrame
     ) -> None:
+        """
+        Writes events and the associated picks into the MongoDB. Ensures that the pick and event ids are consistent
+        with the ones used in the database.
+        """
         # Put events and get mongodb ids, replace event and pick ids with their mongodb counterparts,
         # write assignments to database
         event_result = self.db.insert_many_ignore_duplicates(
@@ -421,6 +512,10 @@ class S3MongoSBBridge:
     def _load_picks(
         self, station_ids: list[str], t0: datetime.datetime, t1: datetime.datetime
     ) -> pd.DataFrame:
+        """
+        Loads picks for a list of stations during a given time range from the database.
+        The database has already been configured with indices that speed up this query.
+        """
         cursor = self.db["picks"].find(
             {
                 "time": {"$gt": t0, "$lt": t1},
@@ -430,10 +525,20 @@ class S3MongoSBBridge:
 
         return pd.DataFrame(cursor)
 
-    def run_picking(self):
+    def run_picking(self) -> None:
+        """
+        Perform the picking
+        """
         asyncio.run(self._run_picking_async())
 
-    async def _run_picking_async(self):
+    async def _run_picking_async(self) -> None:
+        """
+        An async implementation of the data loading, picking, and output routine.
+        All three tasks are started in parallel with buffer queues in between.
+        This means that the next input data is loaded while the current one is picked.
+        Similarly, the outputs are written to MongoDB while the next data is already being processed.
+        To guarantee this, all underlying functions have been designed to release the GIL.
+        """
         data = asyncio.Queue(self.data_queue_size)
         picks = asyncio.Queue(self.pick_queue_size)
 
@@ -446,7 +551,10 @@ class S3MongoSBBridge:
     async def _load_data(
         self,
         data: asyncio.Queue[obspy.Stream | None],
-    ):
+    ) -> None:
+        """
+        An async function getting data from the S3 sources and putting it into a queue.
+        """
         async for stream in self.s3.load_waveforms():
             await data.put(stream)
 
@@ -456,7 +564,10 @@ class S3MongoSBBridge:
         self,
         data: asyncio.Queue[obspy.Stream | None],
         picks: asyncio.Queue[sbu.PickList | None],
-    ):
+    ) -> None:
+        """
+        An async function taking data from a queue, picking it and returning the results to an output queue.
+        """
         while True:
             stream = await data.get()
             if stream is None:
@@ -471,7 +582,12 @@ class S3MongoSBBridge:
             stream_annotations = await asyncio.to_thread(self.model.classify, stream)
             await picks.put(stream_annotations.picks)
 
-    async def _write_picks_to_db(self, picks: asyncio.Queue[sbu.PickList | None]):
+    async def _write_picks_to_db(
+        self, picks: asyncio.Queue[sbu.PickList | None]
+    ) -> None:
+        """
+        An async function reading picks from a queue and putting them into the MongoDB.
+        """
         while True:
             stream_picks = await picks.get()
             if stream_picks is None:
@@ -487,6 +603,9 @@ class S3MongoSBBridge:
             await asyncio.to_thread(self._write_single_picklist_to_db, stream_picks)
 
     def _write_single_picklist_to_db(self, picks: sbu.PickList) -> None:
+        """
+        Converts picks into records that can be submitted to MongoDB and writes them.
+        """
         self.db.insert_many_ignore_duplicates(
             "picks",
             [
@@ -502,11 +621,19 @@ class S3MongoSBBridge:
         )
 
     def get_pick_jobs(self) -> None:
+        """
+        Lists the available stations in an area and prints them
+        :return:
+        """
         stations = self.db.get_stations(self.extent)
         logger.debug(f"Found {len(stations)} jobs")
         print(",".join(stations["id"]))
 
     def submit_jobs(self) -> None:
+        """
+        Submits picking and association jobs to AWS batch while maintaining dependencies between the jobs.
+        A separate implementation of this function is available in submit.py.
+        """
         stations = self.db.get_stations(self.extent)
         days = np.arange(self.s3.start, self.s3.end, datetime.timedelta(days=1))
         logger.debug(f"Starting jobs for {len(stations)} stations and {len(days)} days")
