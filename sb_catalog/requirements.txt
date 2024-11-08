@@ -1,5 +1,0 @@
-boto3
-numpy
-pymongo
-pandas
-matplotlib
