@@ -13,6 +13,9 @@ RUN pip install torch torchvision torchaudio --index-url https://download.pytorc
 # SeisBench
 RUN pip install seisbench pyocto ipython s3fs pymongo boto3 tqdm
 
+# Get AWS DocumentDB public key
+RUN wget https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+
 # copy the content of the local src directory to the working directory
 COPY src/ src/
 
