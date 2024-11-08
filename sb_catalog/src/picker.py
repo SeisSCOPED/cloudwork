@@ -41,8 +41,8 @@ def main() -> None:
     parser.add_argument(
         "--s3_format",
         type=str,
-        default="ncedc",
-        help="Format of the seismic data store. Only NCEDC is supported at the moment.",
+        required=True,
+        help="Format of the seismic data store. Only SCEDC and NCEDC are supported at the moment.",
     )
     parser.add_argument(
         "--db_uri", type=str, required=True, help="URI of the MongoDB database"
@@ -325,8 +325,16 @@ class S3DataSource:
                 uris.append(
                     f"{self.s3}/continuous_waveforms/{net}/{year}/{year}.{day}/{sta}.{net}.{channel}{c}.{loc}.D.{year}.{day}"
                 )
+        elif self.s3_format == "scedc":
+            net, sta, loc = station.split(".")
+            year = date.strftime("%Y")
+            day = date.strftime("%j")
+            for c in self.components:
+                uris.append(
+                    f"/continuous_waveforms/{year}/{year}_{day}/{net}{sta.ljust(5, '_')}{channel}{c}{loc.ljust(3, '_')}{year}{day}.ms"
+                )
         else:
-            raise NotImplementedError(f"Format '{format}' unknown.")
+            raise NotImplementedError(f"Format '{format}' not implemented.")
 
         return uris
 

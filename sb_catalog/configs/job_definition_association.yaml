@@ -2,7 +2,7 @@ jobDefinitionName: '' # [REQUIRED] Specify a name for the job definition to regi
 type: container
 parameters: {} # These parameters will be overwritten
 containerProperties:
-  image: yetinam/seisbench-scoped
+  image: ghcr.io/seisscoped/cloudwork:latest
   jobRoleArn: '' # [REQUIRED] The Amazon Resource Name (ARN) of the IAM role that the container can assume for AWS permissions.
   executionRoleArn: '' # [REQUIRED] The Amazon Resource Name (ARN) of the IAM role that the Amazon ECS container agent and the Docker daemon can assume.
   command:
