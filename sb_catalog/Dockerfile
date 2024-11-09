@@ -4,9 +4,6 @@ FROM python:3.12
 # set the working directory in the container
 WORKDIR /code
 
-# copy the dependencies file to the working directory
-# COPY requirements.txt .
-
 # install dependencies
 # pytorch CPU
 RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
