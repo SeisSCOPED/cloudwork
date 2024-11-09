@@ -20,7 +20,7 @@ from s3fs import S3FileSystem
 from tqdm import tqdm
 
 from .parameters import JOB_DEFINITION_ASSOCIATION, JOB_DEFINITION_PICKING, JOB_QUEUE
-from .util import SeisBenchCollection
+from .util import SeisBenchDatabase
 
 logger = logging.getLogger("sb_picker")
 
@@ -45,10 +45,10 @@ def main() -> None:
         help="Format of the seismic data store. Only SCEDC and NCEDC are supported at the moment.",
     )
     parser.add_argument(
-        "--db_uri", type=str, required=True, help="URI of the MongoDB database"
+        "--db_uri", type=str, required=True, help="URI of the MongoDB cluster."
     )
     parser.add_argument(
-        "--collection", type=str, required=True, help="The collection for MongoDB"
+        "--database", type=str, required=True, help="MongoDB database name."
     )
     parser.add_argument(
         "--stations",
@@ -90,19 +90,25 @@ def main() -> None:
         help="Model weights to load through SeisBench from_pretrained.",
     )
     parser.add_argument(
-        "--p_threshold", default=0.2, type=float, help="Picking threshold for P waves"
+        "--p_threshold", default=0.2, type=float, help="Picking threshold for P waves."
     )
     parser.add_argument(
-        "--s_threshold", default=0.2, type=float, help="Picking threshold for S waves"
+        "--s_threshold", default=0.2, type=float, help="Picking threshold for S waves."
     )
     parser.add_argument(
-        "--data_queue_size", default=5, type=int, help="Buffer size for data preloading"
+        "--data_queue_size",
+        default=5,
+        type=int,
+        help="Buffer size for data preloading.",
     )
     parser.add_argument(
-        "--pick_queue_size", default=5, type=int, help="Buffer size for picking results"
+        "--pick_queue_size",
+        default=5,
+        type=int,
+        help="Buffer size for picking results.",
     )
     parser.add_argument(
-        "--debug", action="store_true", help="Enables additional debug output"
+        "--debug", action="store_true", help="Enables additional debug output."
     )
     args = parser.parse_args()
 
@@ -116,7 +122,7 @@ def main() -> None:
         logger.setLevel(logging.DEBUG)
 
     # Set up data base for results and data source
-    db = SeisBenchCollection(args.db_uri, args.collection)
+    db = SeisBenchDatabase(args.db_uri, args.database)
     s3 = S3DataSource(
         s3=args.s3,
         s3_format=args.s3_format,
@@ -341,7 +347,7 @@ class S3DataSource:
 
 class S3MongoSBBridge:
     """
-    This bridge connects an S3DataSource, a MongoDB database (represented by the SeisBenchCollection) and
+    This bridge connects an S3DataSource, a MongoDB database (represented by the SeisBenchDatabase) and
     the processing for picking and association (implemented directly in the class).
     Additional functionality is provided for submitting jobs to AWS Batch, however, these functions are also
     available separately in submit.py.
@@ -350,7 +356,7 @@ class S3MongoSBBridge:
     def __init__(
         self,
         s3: S3DataSource,
-        db: SeisBenchCollection,
+        db: SeisBenchDatabase,
         model: Optional[str] = None,
         weight: Optional[str] = None,
         p_threshold: Optional[float] = None,
@@ -399,7 +405,7 @@ class S3MongoSBBridge:
 
     def _put_run_data(self, **kwargs: Any) -> ObjectId:
         kwargs["timestamp"] = datetime.datetime.now(datetime.timezone.utc)
-        return self.db["sb_runs"].insert_one(kwargs).inserted_id
+        return self.db.database["sb_runs"].insert_one(kwargs).inserted_id
 
     @staticmethod
     def create_model(
@@ -515,7 +521,7 @@ class S3MongoSBBridge:
 
         merged = merged[["event_id", "pick_id"]]
 
-        self.db["assignments"].insert_many(merged.to_dict("records"))
+        self.db.database["assignments"].insert_many(merged.to_dict("records"))
 
     def _load_picks(
         self, station_ids: list[str], t0: datetime.datetime, t1: datetime.datetime
@@ -524,7 +530,7 @@ class S3MongoSBBridge:
         Loads picks for a list of stations during a given time range from the database.
         The database has already been configured with indices that speed up this query.
         """
-        cursor = self.db["picks"].find(
+        cursor = self.db.database["picks"].find(
             {
                 "time": {"$gt": t0, "$lt": t1},
                 "trace_id": {"$in": station_ids},
@@ -650,7 +656,7 @@ class S3MongoSBBridge:
 
         shared_parameters = {
             "db_uri": self.db.db_uri,
-            "collection": self.db.collection,
+            "database": self.db.database.name,
         }
 
         i = 0

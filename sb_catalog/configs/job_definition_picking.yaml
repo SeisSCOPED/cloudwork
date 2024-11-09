@@ -11,8 +11,8 @@ containerProperties:
   - ncedc-pds
   - "--db_uri"
   - Ref::db_uri
-  - "--collection"
-  - Ref::collection
+  - "--database"
+  - Ref::database
   - "--stations"
   - Ref::stations
   - "--start"

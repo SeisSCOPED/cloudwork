@@ -6,7 +6,7 @@ import boto3
 import numpy as np
 
 from .parameters import JOB_DEFINITION_ASSOCIATION, JOB_DEFINITION_PICKING, JOB_QUEUE
-from .util import SeisBenchCollection
+from .util import SeisBenchDatabase
 
 logger = logging.getLogger("sb_picker")
 handler = logging.StreamHandler()
@@ -34,7 +34,7 @@ class SubmitHelper:
         start: datetime.datetime,
         end: datetime.datetime,
         extent: tuple[float, float, float, float],
-        db: SeisBenchCollection,
+        db: SeisBenchDatabase,
         station_group_size: int = 8,
         day_group_size: int = 4,
     ):
@@ -54,7 +54,7 @@ class SubmitHelper:
 
         shared_parameters = {
             "db_uri": self.db.db_uri,
-            "collection": self.db.collection,
+            "database": self.db.database,
         }
 
         i = 0
@@ -127,14 +127,14 @@ def main():
         help="Comma separated: minlat, maxlat, minlon, maxlon",
     )
     parser.add_argument("db_uri", type=str)
-    parser.add_argument("--collection", type=str, default="tutorial")
+    parser.add_argument("--database", type=str, default="tutorial")
 
     args = parser.parse_args()
 
     extent = tuple([float(x) for x in args.extent.split(",")])
     assert len(extent) == 4, "Extent needs to be exactly 4 coordinates"
 
-    db = SeisBenchCollection(args.db_uri, args.collection)
+    db = SeisBenchDatabase(args.db_uri, args.database)
     helper = SubmitHelper(start=args.start, end=args.end, extent=extent, db=db)
     helper.submit_jobs()
 

@@ -7,20 +7,20 @@ import argparse
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from .util import SeisBenchCollection
+from .util import SeisBenchDatabase
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("db_uri", type=str)
-    parser.add_argument("--collection", type=str, default="tutorial")
+    parser.add_argument("--database", type=str, default="tutorial")
     args = parser.parse_args()
 
-    plot_events(args.db_uri, args.collection)
+    plot_events(args.db_uri, args.database)
 
 
-def plot_events(db_uri: str, collection: str) -> None:
-    db = SeisBenchCollection(db_uri, collection)
+def plot_events(db_uri: str, database: str) -> None:
+    db = SeisBenchDatabase(db_uri, database)
 
     cursor = db["events"].find()
     events = pd.DataFrame(list(cursor))

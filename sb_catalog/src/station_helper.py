@@ -1,5 +1,6 @@
 """
-Parse stations from csv file
+Parse stations from csv file and
+initialize the MongoDB / DocumentDB
 """
 
 import argparse
@@ -7,28 +8,28 @@ from pathlib import Path
 
 import pandas as pd
 
-from .util import SeisBenchCollection
+from .util import SeisBenchDatabase
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "path", type=Path, helper="Path to CSV that contians station metadata."
+        "path", type=Path, help="Path to CSV that contians station metadata."
     )
     parser.add_argument(
-        "--db_uri", type=str, required=True, helper="MongoDB server URI."
+        "--db_uri", type=str, required=True, help="URI of the MongoDB cluster."
     )
     parser.add_argument(
-        "--collection", type=str, default="tutorial", helper="MongoDB collection name."
+        "--database", type=str, default="tutorial", help="MongoDB database name."
     )
     args = parser.parse_args()
 
     stations = pd.read_csv(args.path)
-    write_stations(stations, args.db_uri, args.collection)
+    write_stations(stations, args.db_uri, args.database)
 
 
-def write_stations(stations: pd.DataFrame, db_uri: str, collection: str) -> None:
-    db = SeisBenchCollection(db_uri, collection)
+def write_stations(stations: pd.DataFrame, db_uri: str, database: str) -> None:
+    db = SeisBenchDatabase(db_uri, database)
 
     db.insert_many_ignore_duplicates("stations", stations.to_dict("records"))
 
