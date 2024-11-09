@@ -54,7 +54,7 @@ class SubmitHelper:
 
         shared_parameters = {
             "db_uri": self.db.db_uri,
-            "database": self.db.database,
+            "database": self.db.database.name,
         }
 
         i = 0
@@ -126,8 +126,12 @@ def main():
         type=str,
         help="Comma separated: minlat, maxlat, minlon, maxlon",
     )
-    parser.add_argument("db_uri", type=str)
-    parser.add_argument("--database", type=str, default="tutorial")
+    parser.add_argument(
+        "--db_uri", type=str, required=True, help="URI of the MongoDB cluster."
+    )
+    parser.add_argument(
+        "--database", type=str, default="tutorial", help="MongoDB database name."
+    )
 
     args = parser.parse_args()
 
