@@ -12,9 +12,15 @@ from .util import SeisBenchCollection
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("path", type=Path)
-    parser.add_argument("--db_uri", type=str, required=False)
-    parser.add_argument("--collection", type=str, default="tutorial")
+    parser.add_argument(
+        "path", type=Path, helper="Path to CSV that contians station metadata."
+    )
+    parser.add_argument(
+        "--db_uri", type=str, required=True, helper="MongoDB server URI."
+    )
+    parser.add_argument(
+        "--collection", type=str, default="tutorial", helper="MongoDB collection name."
+    )
     args = parser.parse_args()
 
     stations = pd.read_csv(args.path)

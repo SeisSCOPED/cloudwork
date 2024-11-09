@@ -167,3 +167,7 @@ cython_debug/
 # Jupyterbook
 _build/
 log.txt
+
+# Notebooks and PEM
+notebooks/
+*.pem
