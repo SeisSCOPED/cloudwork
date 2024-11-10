@@ -44,18 +44,24 @@ class SubmitHelper:
         self.db = db
         self.station_group_size = station_group_size
         self.day_group_size = day_group_size
-
-    def submit_jobs(self) -> None:
-        stations = self.db.get_stations(self.extent)
-        days = np.arange(self.start, self.end, datetime.timedelta(days=1))
-        logger.debug(f"Starting jobs for {len(stations)} stations and {len(days)} days")
-
-        client = boto3.client("batch")
-
-        shared_parameters = {
+        self.client = boto3.client("batch")
+        self.shared_parameters = {
             "db_uri": self.db.db_uri,
             "database": self.db.database.name,
         }
+
+    def submit_jobs(self, command: str) -> None:
+        if command == "pick":
+            self.submit_pick_jobs()
+        elif command == "associate":
+            self.submit_association_jobs()
+        else:
+            raise ValueError(f"Unknown command '{command}'")
+
+    def submit_pick_jobs(self) -> None:
+        stations = self.db.get_stations(self.extent)
+        days = np.arange(self.start, self.end, datetime.timedelta(days=1))
+        logger.debug(f"Starting picking jobs for {len(stations)} stations and {len(days)} days")
 
         i = 0
         while i < len(days) - 1:
@@ -76,32 +82,44 @@ class SubmitHelper:
 
                 logger.debug(f"Submitting pick job with: {parameters}")
                 pick_jobs.append(
-                    client.submit_job(
+                    self.client.submit_job(
                         jobName=f"picking_{i}_{j}",
                         jobQueue=JOB_QUEUE,
                         jobDefinition=JOB_DEFINITION_PICKING,
-                        parameters={**parameters, **shared_parameters},
+                        parameters={**parameters, **self.shared_parameters},
                     )
                 )
 
                 j += self.station_group_size
+            i += self.day_group_size
 
-            extent = ",".join([str(x) for x in self.extent])
+    def submit_association_jobs(self) -> None:
+        stations = self.db.get_stations(self.extent)
+        days = np.arange(self.start, self.end, datetime.timedelta(days=1))
+        extent = ",".join([str(x) for x in self.extent])
+    
+        logger.debug(f"Starting association jobs for {len(stations)} stations and {len(days)} days")
+
+        i = 0
+        while i < len(days) - 1:
+            day0 = days[i].astype(datetime.datetime).strftime("%Y.%j")
+            day1 = (
+                days[min(i + self.day_group_size, len(days) - 1)]
+                .astype(datetime.datetime)
+                .strftime("%Y.%j")
+            )
+
+            association_jobs = []
             parameters = {"start": day0, "end": day1, "extent": extent}
             logger.debug(f"Submitting association job with: {parameters}")
-            dependencies = [
-                {"jobId": job["jobId"], "type": "SEQUENTIAL"} for job in pick_jobs
-            ]
-            pick_jobs.append(
-                client.submit_job(
+            association_jobs.append(
+                self.client.submit_job(
                     jobName=f"association_{i}",
                     jobQueue=JOB_QUEUE,
                     jobDefinition=JOB_DEFINITION_ASSOCIATION,
-                    dependsOn=dependencies,
-                    parameters={**parameters, **shared_parameters},
+                    parameters={**parameters, **self.shared_parameters},
                 )
             )
-
             i += self.day_group_size
 
 
@@ -111,6 +129,10 @@ def parse_year_day(x: str) -> datetime.date:
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "command", type=str,
+        help="Subroutine to execute. Should be either pick or associate."
+    )
     parser.add_argument(
         "start",
         type=parse_year_day,
@@ -140,7 +162,7 @@ def main():
 
     db = SeisBenchDatabase(args.db_uri, args.database)
     helper = SubmitHelper(start=args.start, end=args.end, extent=extent, db=db)
-    helper.submit_jobs()
+    helper.submit_jobs(args.command)
 
 
 if __name__ == "__main__":

@@ -19,10 +19,10 @@ def main():
     plot_events(args.db_uri, args.database)
 
 
-def plot_events(db_uri: str, database: str) -> None:
+def plot_events(db_uri: str, database: str, savefig: bool = False) -> None:
     db = SeisBenchDatabase(db_uri, database)
 
-    cursor = db["events"].find()
+    cursor = db.database["events"].find()
     events = pd.DataFrame(list(cursor))
 
     fig = plt.figure()
@@ -33,7 +33,8 @@ def plot_events(db_uri: str, database: str) -> None:
     ax.set_ylabel("North [km]")
     cbar = fig.colorbar(cb, label="Depth [km]")
     cbar.ax.invert_yaxis()
-    fig.savefig("events.png", bbox_inches="tight", dpi=300)
+    if savefig:
+        fig.savefig("events.png", bbox_inches="tight", dpi=300)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,6 @@ import logging
 import re
 from typing import Any, AsyncIterator, Optional
 
-import boto3
 import numpy as np
 import obspy
 import pandas as pd
@@ -19,7 +18,6 @@ from bson import ObjectId
 from s3fs import S3FileSystem
 from tqdm import tqdm
 
-from .parameters import JOB_DEFINITION_ASSOCIATION, JOB_DEFINITION_PICKING, JOB_QUEUE
 from .util import SeisBenchDatabase, network_mapper, s3_path_mapper, parse_year_day
 
 logger = logging.getLogger("sb_picker")
@@ -30,8 +28,9 @@ def main() -> None:
     """
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "command", type=str
-    )  # Subroutine to execute. See below for acailable functions.
+        "command", type=str, required=True,
+        help="Subroutine to execute. See below for available functions."
+    )
     parser.add_argument(
         "--db_uri", type=str, required=True, help="URI of the MongoDB cluster."
     )
@@ -144,8 +143,6 @@ def main() -> None:
         picker.run_association(args.start, args.end)
     elif args.command == "pick_jobs":
         picker.get_pick_jobs()
-    elif args.command == "submit_jobs":
-        picker.submit_jobs()
     else:
         raise ValueError(f"Unknown command '{args.command}'")
 
@@ -612,69 +609,6 @@ class S3MongoSBBridge:
         stations = self.db.get_stations(self.extent)
         logger.debug(f"Found {len(stations)} jobs")
         print(",".join(stations["id"]))
-
-    def submit_jobs(self) -> None:
-        """
-        Submits picking and association jobs to AWS batch while maintaining dependencies between the jobs.
-        A separate implementation of this function is available in submit.py.
-        """
-        stations = self.db.get_stations(self.extent)
-        days = np.arange(self.s3.start, self.s3.end, datetime.timedelta(days=1))
-        logger.debug(f"Starting jobs for {len(stations)} stations and {len(days)} days")
-
-        client = boto3.client("batch")
-
-        shared_parameters = {
-            "db_uri": self.db.db_uri,
-            "database": self.db.database.name,
-        }
-
-        i = 0
-        while i < len(days) - 1:
-            day0 = days[i].astype(datetime.datetime).strftime("%Y.%j")
-            day1 = (
-                days[min(i + self.day_group_size, len(days) - 1)]
-                .astype(datetime.datetime)
-                .strftime("%Y.%j")
-            )
-
-            pick_jobs = []
-            j = 0
-            while j < len(stations) - 1:
-                sub_stations = ",".join(
-                    stations["id"].iloc[j : j + self.station_group_size]
-                )
-                parameters = {"start": day0, "end": day1, "stations": sub_stations}
-
-                logger.debug(f"Submitting pick job with: {parameters}")
-                pick_jobs.append(
-                    client.submit_job(
-                        jobName=f"munchmeyer_picking_{i}_{j}",
-                        jobQueue=JOB_QUEUE,
-                        jobDefinition=JOB_DEFINITION_PICKING,
-                        parameters={**parameters, **shared_parameters},
-                    )
-                )
-
-                j += self.station_group_size
-
-            extent = ",".join([str(x) for x in self.extent])
-            parameters = {"start": day0, "end": day1, "extent": extent}
-            logger.debug(f"Submitting association job with: {parameters}")
-            dependencies = [
-                {"jobId": job["jobId"], "type": "SEQUENTIAL"} for job in pick_jobs
-            ]
-            pick_jobs.append(
-                client.submit_job(
-                    jobName=f"munchmeyer_association_{i}",
-                    jobQueue=JOB_QUEUE,
-                    jobDefinition=JOB_DEFINITION_ASSOCIATION,
-                    dependsOn=dependencies,
-                    parameters={**parameters, **shared_parameters},
-                )
-            )
-
-            i += self.day_group_size
 
 
 if __name__ == "__main__":
