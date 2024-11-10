@@ -77,7 +77,7 @@ class SubmitHelper:
                 logger.debug(f"Submitting pick job with: {parameters}")
                 pick_jobs.append(
                     client.submit_job(
-                        jobName=f"munchmeyer_picking_{i}_{j}",
+                        jobName=f"picking_{i}_{j}",
                         jobQueue=JOB_QUEUE,
                         jobDefinition=JOB_DEFINITION_PICKING,
                         parameters={**parameters, **shared_parameters},
@@ -94,7 +94,7 @@ class SubmitHelper:
             ]
             pick_jobs.append(
                 client.submit_job(
-                    jobName=f"munchmeyer_association_{i}",
+                    jobName=f"association_{i}",
                     jobQueue=JOB_QUEUE,
                     jobDefinition=JOB_DEFINITION_ASSOCIATION,
                     dependsOn=dependencies,

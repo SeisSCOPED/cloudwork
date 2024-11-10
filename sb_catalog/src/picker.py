@@ -20,14 +20,9 @@ from s3fs import S3FileSystem
 from tqdm import tqdm
 
 from .parameters import JOB_DEFINITION_ASSOCIATION, JOB_DEFINITION_PICKING, JOB_QUEUE
-from .util import SeisBenchDatabase
+from .util import SeisBenchDatabase, network_mapper, s3_path_mapper, parse_year_day
 
 logger = logging.getLogger("sb_picker")
-
-
-def parse_year_day(x: str) -> datetime.date:
-    return datetime.datetime.strptime(x, "%Y.%j").date()
-
 
 def main() -> None:
     """
@@ -37,13 +32,6 @@ def main() -> None:
     parser.add_argument(
         "command", type=str
     )  # Subroutine to execute. See below for acailable functions.
-    parser.add_argument("--s3", type=str, required=True, help="URI of the S3 bucket")
-    parser.add_argument(
-        "--s3_format",
-        type=str,
-        required=True,
-        help="Format of the seismic data store. Only SCEDC and NCEDC are supported at the moment.",
-    )
     parser.add_argument(
         "--db_uri", type=str, required=True, help="URI of the MongoDB cluster."
     )
@@ -60,13 +48,13 @@ def main() -> None:
         "--start",
         type=parse_year_day,
         required=False,
-        help="Format: YYYY.DDD (included)",
+        help="Format: YYYY.DDD (included).",
     )
     parser.add_argument(
         "--end",
         type=parse_year_day,
         required=False,
-        help="Format: YYYY.DDD (not included)",
+        help="Format: YYYY.DDD (not included).",
     )
     parser.add_argument(
         "--extent",
@@ -75,7 +63,7 @@ def main() -> None:
         help="Comma separated: minlat, maxlat, minlon, maxlon",
     )
     parser.add_argument(
-        "--components", type=str, default="ZNE12", help="Components to scan"
+        "--components", type=str, default="ZNE12", help="Components to scan."
     )
     parser.add_argument(
         "--model",
@@ -124,8 +112,6 @@ def main() -> None:
     # Set up data base for results and data source
     db = SeisBenchDatabase(args.db_uri, args.database)
     s3 = S3DataSource(
-        s3=args.s3,
-        s3_format=args.s3_format,
         stations=args.stations,
         start=args.start,
         end=args.end,
@@ -171,19 +157,16 @@ class S3DataSource:
 
     def __init__(
         self,
-        s3: str,
-        s3_format: str,
         start: Optional[datetime.date] = None,
         end: Optional[datetime.date] = None,
         stations: Optional[str] = None,
         components: str = "ZNE12",
         channels: str = "HH?,BH?,EH?,HN?,BN?,EN?,HL?,BL?,EL?",
     ):
-        self.s3 = s3
-        self.s3_format = s3_format
         self.start = start
         self.end = end
         self.components = components
+        self.s3s = list(set(network_mapper.values()))
         if stations is None:
             self.stations = []
         else:
@@ -203,16 +186,11 @@ class S3DataSource:
 
         for station in self.stations:
             for day in days:
-                logger.debug(f"Loading {station} - {day}")
+                day = day.astype(datetime.datetime)
+                logger.debug(f"Loading {station} - {day.strftime('%Y.%j')}")
                 stream = obspy.Stream()
                 for channel in self.channels:
-                    for uri in self._generate_waveform_uris(
-                        station,
-                        channel[
-                            :2
-                        ],  # Truncate the ? from the end of the channels string
-                        day.astype(datetime.datetime),
-                    ):
+                    for uri in self._generate_waveform_uris(station, channel[:2], day):
                         stream += await asyncio.to_thread(
                             self._read_waveform_from_s3, fs, uri
                         )
@@ -230,15 +208,19 @@ class S3DataSource:
         Returns station list as a dataframe.
         """
         fs = S3FileSystem(anon=True)
-        logger.debug("Listing station URIs")
-        networks = fs.ls(f"{self.s3}/FDSNstationXML/")[1:]
-        station_uris = []
-        for net in networks:
-            station_uris += fs.ls(net)[1:]
 
-        logger.debug("Parsing station inventories")
+        station_uris = []
+        for s3 in self.s3s:
+            logger.debug(f"Listing StationXML URIs from {s3}.")
+            networks = fs.ls(f"{s3}/FDSNstationXML/")
+            for net in networks:
+                # SCEDC also holds "unauthoritative-XML" for other stations
+                if len(net.split("/")[-1]) == 2:
+                    station_uris += fs.ls(net)[1:]
+
+        logger.debug("Reading and parsing all station inventories. This may take some time...")
         stations = []
-        for uri in tqdm(station_uris):
+        for uri in tqdm(station_uris, total=len(station_uris)):
             with fs.open(uri) as f:
                 inv = obspy.read_inventory(f)
 
@@ -317,30 +299,18 @@ class S3DataSource:
             return obspy.Stream()
 
     def _generate_waveform_uris(
-        self, station: str, channel: str, date: datetime.date
+        self, station: str, cha: str, date: datetime.date
     ) -> list[str]:
         """
         Generates a list of S3 uris for the requested data
         """
         uris = []
-        if self.s3_format == "ncedc":
-            net, sta, loc = station.split(".")
-            year = date.strftime("%Y")
-            day = date.strftime("%j")
-            for c in self.components:
-                uris.append(
-                    f"{self.s3}/continuous_waveforms/{net}/{year}/{year}.{day}/{sta}.{net}.{channel}{c}.{loc}.D.{year}.{day}"
-                )
-        elif self.s3_format == "scedc":
-            net, sta, loc = station.split(".")
-            year = date.strftime("%Y")
-            day = date.strftime("%j")
-            for c in self.components:
-                uris.append(
-                    f"/continuous_waveforms/{year}/{year}_{day}/{net}{sta.ljust(5, '_')}{channel}{c}{loc.ljust(3, '_')}{year}{day}.ms"
-                )
-        else:
-            raise NotImplementedError(f"Format '{format}' not implemented.")
+        net, sta, loc = station.split(".")
+        year = date.strftime("%Y")
+        day = date.strftime("%j")
+        for c in self.components:
+            # go through all possible components...
+            uris.append(s3_path_mapper(net, sta, loc, cha, year, day, c))
 
         return uris
 
@@ -427,7 +397,7 @@ class S3MongoSBBridge:
         self._write_stations_to_db(stations)
 
     def _write_stations_to_db(self, stations):
-        logger.debug("Writing station information to DB")
+        logger.debug("Writing station information to MongoDB")
         self.db.insert_many_ignore_duplicates("stations", stations.to_dict("records"))
 
     def run_association(self, t0: datetime.datetime, t1: datetime.datetime):

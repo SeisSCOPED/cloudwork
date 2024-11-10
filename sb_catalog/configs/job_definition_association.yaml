@@ -7,8 +7,6 @@ containerProperties:
   executionRoleArn: '' # [REQUIRED] The Amazon Resource Name (ARN) of the IAM role that the Amazon ECS container agent and the Docker daemon can assume.
   command:
   - associate
-  - "--s3"
-  - ncedc-pds
   - "--db_uri"
   - Ref::db_uri
   - "--database"

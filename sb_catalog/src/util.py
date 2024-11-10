@@ -1,6 +1,7 @@
 import logging
 from typing import Any
 
+import datetime
 import pandas as pd
 import pymongo
 from pymongo.errors import BulkWriteError, DuplicateKeyError
@@ -76,3 +77,34 @@ class SeisBenchDatabase(pymongo.MongoClient):
                 logger.warning("Some duplicate entries have been skipped.")
             else:
                 raise e
+
+def parse_year_day(x: str) -> datetime.date:
+    return datetime.datetime.strptime(x, "%Y.%j").date()
+
+def s3_path_mapper(net, sta, loc, cha, year, day, c) -> str:
+    try:
+        s3 = network_mapper[net]
+    except KeyError:
+        raise NotImplementedError(f"Network {net} not implemented. Check src.util.")
+    prefix = _prefix_mapper(s3, net, year, day)
+    basename = _basename_mapper(s3, net, sta, loc, cha, year, day, c)
+    return f"{prefix}{basename}"
+    
+def _prefix_mapper(s3, net, year, day) -> str:
+    if s3 == "ncedc-pds":
+        return f"{s3}/continuous_waveforms/{net}/{year}/{year}.{day}/"
+    elif s3 == "scedc-pds":
+        return f"{s3}/continuous_waveforms/{year}/{year}_{day}/"
+    
+def _basename_mapper(s3, net, sta, loc, cha, year, day, c) -> str:
+    if s3 == "ncedc-pds":
+        return f"{sta}.{net}.{cha}{c}.{loc}.D.{year}.{day}"
+    elif s3 == "scedc-pds":
+        return f"{net}{sta.ljust(5, '_')}{cha}{c}{loc.ljust(3, '_')}{year}{day}.ms"
+    
+network_mapper = {
+    "CI": "scedc-pds",
+    "BK": "ncedc-pds",
+    "NC": "ncedc-pds",
+    "NP": "ncedc-pds"
+}
