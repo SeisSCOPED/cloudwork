@@ -35,8 +35,8 @@ class SubmitHelper:
         end: datetime.datetime,
         extent: tuple[float, float, float, float],
         db: SeisBenchDatabase,
-        station_group_size: int = 8,
-        day_group_size: int = 4,
+        station_group_size: int = 20,
+        day_group_size: int = 100,
     ):
         self.start = start
         self.end = end
@@ -74,7 +74,7 @@ class SubmitHelper:
             pick_jobs = []
             j = 0
             while j < len(days) - 1:
-                day0 = days[i].astype(datetime.datetime).strftime("%Y.%j")
+                day0 = days[j].astype(datetime.datetime).strftime("%Y.%j")
                 day1 = (
                     days[min(j + self.day_group_size, len(days) - 1)]
                     .astype(datetime.datetime)
