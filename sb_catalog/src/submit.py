@@ -61,22 +61,24 @@ class SubmitHelper:
     def submit_pick_jobs(self) -> None:
         stations = self.db.get_stations(self.extent)
         days = np.arange(self.start, self.end, datetime.timedelta(days=1))
-        logger.debug(f"Starting picking jobs for {len(stations)} stations and {len(days)} days")
+        logger.debug(
+            f"Starting picking jobs for {len(stations)} stations and {len(days)} days"
+        )
 
         i = 0
-        while i < len(days) - 1:
-            day0 = days[i].astype(datetime.datetime).strftime("%Y.%j")
-            day1 = (
-                days[min(i + self.day_group_size, len(days) - 1)]
-                .astype(datetime.datetime)
-                .strftime("%Y.%j")
+        while i < len(stations) - 1:
+            sub_stations = ",".join(
+                stations["id"].iloc[i : i + self.station_group_size]
             )
 
             pick_jobs = []
             j = 0
-            while j < len(stations) - 1:
-                sub_stations = ",".join(
-                    stations["id"].iloc[j : j + self.station_group_size]
+            while j < len(days) - 1:
+                day0 = days[i].astype(datetime.datetime).strftime("%Y.%j")
+                day1 = (
+                    days[min(j + self.day_group_size, len(days) - 1)]
+                    .astype(datetime.datetime)
+                    .strftime("%Y.%j")
                 )
                 parameters = {"start": day0, "end": day1, "stations": sub_stations}
 
@@ -90,15 +92,17 @@ class SubmitHelper:
                     )
                 )
 
-                j += self.station_group_size
-            i += self.day_group_size
+                j += self.day_group_size
+            i += self.station_group_size
 
     def submit_association_jobs(self) -> None:
         stations = self.db.get_stations(self.extent)
         days = np.arange(self.start, self.end, datetime.timedelta(days=1))
         extent = ",".join([str(x) for x in self.extent])
-    
-        logger.debug(f"Starting association jobs for {len(stations)} stations and {len(days)} days")
+
+        logger.debug(
+            f"Starting association jobs for {len(stations)} stations and {len(days)} days"
+        )
 
         i = 0
         while i < len(days) - 1:
@@ -130,8 +134,9 @@ def parse_year_day(x: str) -> datetime.date:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "command", type=str,
-        help="Subroutine to execute. Should be either pick or associate."
+        "command",
+        type=str,
+        help="Subroutine to execute. Should be either pick or associate.",
     )
     parser.add_argument(
         "start",
