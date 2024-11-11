@@ -28,7 +28,7 @@ def main() -> None:
     """
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "command", type=str, required=True,
+        "command", type=str,
         help="Subroutine to execute. See below for available functions."
     )
     parser.add_argument(
