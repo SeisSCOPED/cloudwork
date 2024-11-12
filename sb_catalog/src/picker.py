@@ -5,6 +5,7 @@ import functools
 import itertools
 import logging
 import re
+import time
 from typing import Any, AsyncIterator, Optional
 
 import numpy as np
@@ -14,13 +15,21 @@ import pyocto
 import seisbench
 import seisbench.models as sbm
 import seisbench.util as sbu
+from botocore.exceptions import ClientError
 from bson import ObjectId
 from s3fs import S3FileSystem
 from tqdm import tqdm
 
-from .util import SeisBenchDatabase, network_mapper, s3_path_mapper, parse_year_day
+from .util import (
+    SeisBenchDatabase,
+    _prefix_mapper,
+    network_mapper,
+    parse_year_day,
+    s3_path_mapper,
+)
 
 logger = logging.getLogger("sb_picker")
+
 
 def main() -> None:
     """
@@ -28,8 +37,9 @@ def main() -> None:
     """
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "command", type=str,
-        help="Subroutine to execute. See below for available functions."
+        "command",
+        type=str,
+        help="Subroutine to execute. See below for available functions.",
     )
     parser.add_argument(
         "--db_uri", type=str, required=True, help="URI of the MongoDB cluster."
@@ -95,6 +105,9 @@ def main() -> None:
         help="Buffer size for picking results.",
     )
     parser.add_argument(
+        "--delay", default=30, type=int, help="Add random delay when starting the job."
+    )
+    parser.add_argument(
         "--debug", action="store_true", help="Enables additional debug output."
     )
     args = parser.parse_args()
@@ -136,6 +149,9 @@ def main() -> None:
     )
 
     if args.command == "pick":
+        delay = np.random.randint(args.delay)
+        logger.debug(f"Delaying this job for {delay} sec.")
+        time.sleep(delay)
         picker.run_picking()
     elif args.command == "station_list":
         picker.run_station_listing()
@@ -166,8 +182,10 @@ class S3DataSource:
         self.s3s = list(set(network_mapper.values()))
         if stations is None:
             self.stations = []
+            self.networks = []
         else:
             self.stations = stations.split(",")
+            self.networks = list(set([s.split(".")[0] for s in self.stations]))
         self.channels = channels.split(",")
 
     async def load_waveforms(self) -> AsyncIterator[obspy.Stream]:
@@ -181,16 +199,27 @@ class S3DataSource:
         days = np.arange(self.start, self.end, datetime.timedelta(days=1))
         fs = S3FileSystem(anon=True)
 
-        for station in self.stations:
-            for day in days:
-                day = day.astype(datetime.datetime)
+        for day in days:
+            day = day.astype(datetime.datetime)
+
+            # get a list of exist uri
+            # fs.ls can be slow, but it merges many small fs.open request
+            # and reduced the total number of requests
+            avail_uri = []
+            for net in self.networks:
+                s3 = network_mapper[net]
+                prefix = _prefix_mapper(s3, net, day.strftime("%Y"), day.strftime("%j"))
+                avail_uri += fs.ls(prefix)
+
+            for station in self.stations:
                 logger.debug(f"Loading {station} - {day.strftime('%Y.%j')}")
                 stream = obspy.Stream()
                 for channel in self.channels:
                     for uri in self._generate_waveform_uris(station, channel[:2], day):
-                        stream += await asyncio.to_thread(
-                            self._read_waveform_from_s3, fs, uri
-                        )
+                        if uri in avail_uri:
+                            stream += await asyncio.to_thread(
+                                self._read_waveform_from_s3, fs, uri
+                            )
                     if len(stream) > 0:
                         break
 
@@ -215,7 +244,9 @@ class S3DataSource:
                 if len(net.split("/")[-1]) == 2:
                     station_uris += fs.ls(net)[1:]
 
-        logger.debug("Reading and parsing all station inventories. This may take some time...")
+        logger.debug(
+            "Reading and parsing all station inventories. This may take some time..."
+        )
         stations = []
         for uri in tqdm(station_uris, total=len(station_uris)):
             with fs.open(uri) as f:
@@ -286,14 +317,21 @@ class S3DataSource:
     def _read_waveform_from_s3(fs, uri) -> obspy.Stream:
         """
         Failure tolerant method for reading data from S3. If an error occurs, an empty stream is returned.
+        Unless the error is because of S3 overloaded, the job will sleep for 5 seconds and retry.
         """
-        try:
-            with fs.open(uri) as f:
-                return obspy.read(f)
-        except FileNotFoundError:  # File does not exist
-            return obspy.Stream()
-        except ValueError:  # Raised for certain types of corrupt files
-            return obspy.Stream()
+        while True:
+            try:
+                with fs.open(uri) as f:
+                    return obspy.read(f)
+            except ClientError:
+                logger.debug(
+                    f"Getting S3 ClientError. Resting for 5 seconds and retry."
+                )
+                time.sleep(5)
+            except FileNotFoundError:  # File does not exist
+                return obspy.Stream()
+            except ValueError:  # Raised for certain types of corrupt files
+                return obspy.Stream()
 
     def _generate_waveform_uris(
         self, station: str, cha: str, date: datetime.date
