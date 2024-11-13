@@ -41,6 +41,8 @@ retryStrategy:
   evaluateOnExit:
     - action: "RETRY"
       onStatusReason: "Your Spot Task was interrupted."
+    - action: "RETRY"
+      onStatusReason: "Job attempt duration exceeded timeout"
     - action: "EXIT"
       onReason: "*"
 
