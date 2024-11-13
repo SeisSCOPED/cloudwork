@@ -254,6 +254,13 @@ class S3DataSource:
 
             for net in inv:
                 for sta in net:
+                    start_date = sta.start_date.strftime("%Y.%j")
+                    try:
+                        # some stations may have no end date defined
+                        end_date = sta.end_date.strftime("%Y.%j")
+                    except AttributeError:
+                        end_date = "3000.001"
+
                     locs = {cha.location_code for cha in sta}
                     for loc in locs:
                         channels = ",".join(
@@ -278,6 +285,8 @@ class S3DataSource:
                                 "latitude": sta.latitude,
                                 "longitude": sta.longitude,
                                 "elevation": sta.elevation,
+                                "start_date": start_date,
+                                "end_date": end_date,
                             }
                         )
 
