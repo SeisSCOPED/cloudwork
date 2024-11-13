@@ -16,5 +16,14 @@ RUN wget https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
 # copy the content of the local src directory to the working directory
 COPY src/ src/
 
+# !!!TEMPORARY!!! load models from Jannes personal data repo.
+RUN wget https://munchmeyer.de/data/sbmodels_v3_230614.tgz \
+    && mkdir models \
+    && mkdir -p /root/.seisbench/models/v3/  \
+    && tar xvf sbmodels_v3_230614.tgz -C models/ \
+    && cp -r models/phasenet /root/.seisbench/models/v3/phasenet \
+    && rm -rf models/ \
+    && rm -rf sbmodels_v3_230614.tgz
+
 # command to run on container start
 ENTRYPOINT ["python", "-m", "src.picker"]
