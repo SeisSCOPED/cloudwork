@@ -6,7 +6,7 @@ import boto3
 import numpy as np
 
 from .parameters import JOB_DEFINITION_ASSOCIATION, JOB_DEFINITION_PICKING, JOB_QUEUE
-from .util import SeisBenchDatabase
+from .util import SeisBenchDatabase, filter_station_by_start_end_date
 
 logger = logging.getLogger("sb_picker")
 handler = logging.StreamHandler()
@@ -35,8 +35,8 @@ class SubmitHelper:
         end: datetime.datetime,
         extent: tuple[float, float, float, float],
         db: SeisBenchDatabase,
-        station_group_size: int = 20,
-        day_group_size: int = 100,
+        station_group_size: int = 40,
+        day_group_size: int = 10,
     ):
         self.start = start
         self.end = end
@@ -59,7 +59,9 @@ class SubmitHelper:
             raise ValueError(f"Unknown command '{command}'")
 
     def submit_pick_jobs(self) -> None:
-        stations = self.db.get_stations(self.extent)
+        stations = filter_station_by_start_end_date(
+            self.db.get_stations(self.extent), self.start, self.end
+        )
         days = np.arange(self.start, self.end, datetime.timedelta(days=1))
         logger.debug(
             f"Starting picking jobs for {len(stations)} stations and {len(days)} days"
