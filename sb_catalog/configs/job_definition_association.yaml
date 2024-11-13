@@ -36,3 +36,11 @@ timeout:
 tags: {}
 platformCapabilities:
 - FARGATE
+retryStrategy:
+  attempts: 10
+  evaluateOnExit:
+    - action: "RETRY"
+      onStatusReason: "Your Spot Task was interrupted."
+    - action: "EXIT"
+      onReason: "*"
+
