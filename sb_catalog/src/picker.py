@@ -209,7 +209,11 @@ class S3DataSource:
             for net in self.networks:
                 s3 = network_mapper[net]
                 prefix = _prefix_mapper(s3, net, day.strftime("%Y"), day.strftime("%j"))
-                avail_uri += fs.ls(prefix)
+                try:
+                    avail_uri += fs.ls(prefix)
+                except FileNotFoundError:
+                    logging.debug(f"Path does not exist {prefix}")
+                    pass
 
             for station in self.stations:
                 logger.debug(f"Loading {station} - {day.strftime('%Y.%j')}")
