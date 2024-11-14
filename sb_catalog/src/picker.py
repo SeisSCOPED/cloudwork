@@ -691,7 +691,7 @@ class S3MongoSBBridge:
         return station, day
 
     def _find_pick_records_from_db(self, station, day):
-        return self.db.pick_records.find_one(
+        return self.db.database["pick_records"].find_one(
             {"trace_id": station, "year": day.year, "doy": int(day.strftime("%-j"))}
         )
 
