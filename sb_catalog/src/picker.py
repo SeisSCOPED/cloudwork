@@ -209,7 +209,11 @@ class S3DataSource:
             for net in self.networks:
                 s3 = network_mapper[net]
                 prefix = _prefix_mapper(s3, net, day.strftime("%Y"), day.strftime("%j"))
-                avail_uri += fs.ls(prefix)
+                try:
+                    avail_uri += fs.ls(prefix)
+                except FileNotFoundError:
+                    logging.debug(f"Path does not exist {prefix}")
+                    pass
 
             for station in self.stations:
                 logger.debug(f"Loading {station} - {day.strftime('%Y.%j')}")
@@ -584,6 +588,14 @@ class S3MongoSBBridge:
         An async function getting data from the S3 sources and putting it into a queue.
         """
         async for stream in self.s3.load_waveforms():
+            if len(stream) > 0:
+                station, day = self._parse_stream(stream)
+                if self._find_pick_records_from_db(station, day) is not None:
+                    logger.debug(
+                        f"Found picks for {station} - {day.strftime('%Y.%j')}. Skipping."
+                    )
+                    continue
+
             await data.put(stream)
 
         await data.put(None)
@@ -630,6 +642,8 @@ class S3MongoSBBridge:
 
             await asyncio.to_thread(self._write_single_picklist_to_db, stream_picks)
 
+            await asyncio.to_thread(self._record_single_picklist_to_db, stream_picks)
+
     def _write_single_picklist_to_db(self, picks: sbu.PickList) -> None:
         """
         Converts picks into records that can be submitted to MongoDB and writes them.
@@ -646,6 +660,39 @@ class S3MongoSBBridge:
                 }
                 for pick in picks
             ],
+        )
+
+    def _record_single_picklist_to_db(self, picks: sbu.PickList) -> None:
+        """
+        Converts picks into records that can be submitted to MongoDB and writes them.
+        """
+        self.db.insert_many_ignore_duplicates(
+            "pick_records",
+            [
+                {
+                    "trace_id": picks[0].trace_id,
+                    "year": picks[0].peak_time.datetime.year,
+                    "doy": int(picks[0].peak_time.datetime.strftime("%-j")),
+                    "picks_number": len(picks),
+                    "run_id": self.run_id,
+                }
+            ],
+        )
+
+    def _parse_stream(self, s: obspy.Stream):
+        """
+        Get a rough staiton code and day time based on the given stream
+        """
+        net = s[0].stats.network
+        sta = s[0].stats.station
+        loc = s[0].stats.location
+        day = s[0].stats.starttime
+        station = ".".join([net, sta, loc])
+        return station, day
+
+    def _find_pick_records_from_db(self, station, day):
+        return self.db.pick_records.find_one(
+            {"trace_id": station, "year": day.year, "doy": int(day.strftime("%-j"))}
         )
 
     def get_pick_jobs(self) -> None:
