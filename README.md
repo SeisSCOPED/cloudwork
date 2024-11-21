@@ -29,8 +29,8 @@ To set up the Python environment for CloudWork:
 2. Create and activate a conda environment:
 
    ```bash
-   conda create --name cloudwork python=3.9
-   conda activate cloudwork
+   conda create --name scoped python=3.12
+   conda activate scoped
    ```
 
 3. Install the required dependencies:
