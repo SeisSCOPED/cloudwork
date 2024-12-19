@@ -1,3 +1,0 @@
-id,network_code,station_code,location_code,channels,latitude,longitude,elevation,start_date,end_date
-RE.ONFB2.11,RE,ONFB2,11,"HH2,HH1,HHZ",37.10117,-121.04765,81.0,2019.300,3000.001
-RE.SNJT2.11,RE,SNJT2,11,"HH2,HH1,HHZ",36.81518,-121.44794,127.0,2019.302,3000.001
