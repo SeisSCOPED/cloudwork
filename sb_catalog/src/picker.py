@@ -373,6 +373,7 @@ class S3DataSource:
                     logger.debug(f"Not authorized to access.")
                 else:
                     logger.debug(e.strerror)
+                return obspy.Stream()
             except ClientError:
                 logger.debug(f"Getting S3 ClientError. Sleep for 5 seconds and retry.")
                 time.sleep(5)
