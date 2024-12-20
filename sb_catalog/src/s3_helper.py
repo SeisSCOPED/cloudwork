@@ -49,7 +49,7 @@ class EarthScopeS3ObjectHelper(S3ObjectHelper):
         return f"{EARTHSCOPE_S3_ACCESS_POINT}/miniseed/{net}/{year}/{day}/"
 
     def get_basename(self, net, sta, loc, cha, year, day, comp) -> str:
-        return f"{sta}.{net}.{year}.{day}#?"
+        return f"{sta}.{net}.{year}.{day}#."  # as regexp
 
 
 class CompositeS3ObjectHelper(S3ObjectHelper):
