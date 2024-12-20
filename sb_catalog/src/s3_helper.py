@@ -7,21 +7,24 @@ from .parameters import EARTHSCOPE_S3_ACCESS_POINT
 
 
 class S3ObjectHelper:
-    def get_s3_path(self, net, sta, loc, cha, year, day, c) -> str:
+    def get_data_center(self, net):
+        return NETWORK_MAPPING[net]
+
+    def get_s3_path(self, net, sta, loc, cha, year, day, comp) -> str:
         prefix = self.get_prefix(net, year, day)
-        basename = self.get_basename(net, sta, loc, cha, year, day, c)
+        basename = self.get_basename(net, sta, loc, cha, year, day, comp)
         return f"{prefix}{basename}"
 
     @abstractmethod
-    def get_prefix(self, net, year, day) -> str:
+    def get_prefix(self) -> str:
         pass
 
     @abstractmethod
-    def get_basename(self, net, sta, loc, cha, year, day, c) -> str:
+    def get_basename(self) -> str:
         pass
 
     @abstractmethod
-    def get_fs(self, net):
+    def get_filesystem(self):
         pass
 
 
@@ -29,25 +32,24 @@ class SCEDCS3ObjectHelper(S3ObjectHelper):
     def get_prefix(self, net, year, day) -> str:
         return f"scedc-pds/continuous_waveforms/{year}/{year}_{day}/"
 
-    def get_basename(self, net, sta, loc, cha, year, day, c) -> str:
-        return f"{net}{sta.ljust(5, '_')}{cha}{c}{loc.ljust(3, '_')}{year}{day}.ms"
+    def get_basename(self, net, sta, loc, cha, year, day, comp) -> str:
+        return f"{net}{sta.ljust(5, '_')}{cha}{comp}{loc.ljust(3, '_')}{year}{day}.ms"
 
 
 class NCEDCS3ObjectHelper(S3ObjectHelper):
     def get_prefix(self, net, year, day) -> str:
         return f"ncedc-pds/continuous_waveforms/{net}/{year}/{year}.{day}/"
 
-    def get_basename(self, net, sta, loc, cha, year, day, c) -> str:
-        return f"{sta}.{net}.{cha}{c}.{loc}.D.{year}.{day}"
+    def get_basename(self, net, sta, loc, cha, year, day, comp) -> str:
+        return f"{sta}.{net}.{cha}{comp}.{loc}.D.{year}.{day}"
 
 
 class EarthScopeS3ObjectHelper(S3ObjectHelper):
     def get_prefix(self, net, year, day) -> str:
         return f"{EARTHSCOPE_S3_ACCESS_POINT}/miniseed/{net}/{year}/{day}/"
 
-    def get_basename(self, net, sta, loc, cha, year, day, c) -> str:
-        # TODO implement for version
-        return f"{sta}.{net}.{year}.{day}"
+    def get_basename(self, net, sta, loc, cha, year, day, comp) -> str:
+        return f"{sta}.{net}.{year}.{day}#?"
 
 
 class CompositeS3ObjectHelper(S3ObjectHelper):
@@ -76,12 +78,12 @@ class CompositeS3ObjectHelper(S3ObjectHelper):
             )
 
     def get_prefix(self, net, year, day) -> str:
-        return self.helpers[NETWORK_MAPPING[net]].get_prefix(net, year, day)
+        return self.helpers[self.get_data_center(net)].get_prefix(net, year, day)
 
     def get_basename(self, net, sta, loc, cha, year, day, c) -> str:
-        return self.helpers[NETWORK_MAPPING[net]].get_basename(
+        return self.helpers[self.get_data_center(net)].get_basename(
             net, sta, loc, cha, year, day, c
         )
 
-    def get_fs(self, net):
-        return self.fs[NETWORK_MAPPING[net]]
+    def get_filesystem(self, net):
+        return self.fs[self.get_data_center(net)]

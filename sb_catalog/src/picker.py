@@ -19,10 +19,8 @@ import seisbench.models as sbm
 import seisbench.util as sbu
 from botocore.exceptions import ClientError
 from bson import ObjectId
-from s3fs import S3FileSystem
 from tqdm import tqdm
 
-from .constants import NETWORK_MAPPING
 from .s3_helper import CompositeS3ObjectHelper
 from .utils import SeisBenchDatabase, parse_year_day
 
@@ -196,7 +194,7 @@ class S3DataSource:
             with open(credential, "r") as f:
                 self.credential = json.load(f)
                 logger.debug(
-                    f"EarthScope credential expire at {self.credential['expiration']}"
+                    f"EarthScope credential expire at UTC {self.credential['expiration']}"
                 )
         else:
             self.credential = None
@@ -216,37 +214,57 @@ class S3DataSource:
         for day in days:
             day = day.astype(datetime.datetime)
 
-            # get a list of exist uri
+            # get a list of exist URIs
             # ls can be slow, but it merges many small open request
-            # and reduced the total number of requests
-            avail_uri = []
+            # and effectively reduced the total number of requests
+            avail_uri = {}
             for net in self.networks:
-                fs = self.s3helper.get_fs(net)
+                avail_uri[net] = []
+                # use the corresponding fs for the network
+                fs = self.s3helper.get_filesystem(net)
                 prefix = self.s3helper.get_prefix(
                     net, day.strftime("%Y"), day.strftime("%j")
                 )
                 try:
-                    avail_uri += fs.ls(prefix)
+                    avail_uri[net] += fs.ls(prefix)
                 except FileNotFoundError:
                     logging.debug(f"Path does not exist {prefix}")
                     pass
 
             for station in self.stations:
-                logger.debug(f"Loading {station} - {day.strftime('%Y.%j')}")
+                net, sta, loc = station.split(".")
+                fs = self.s3helper.get_filesystem(net)
+                dc = self.s3helper.get_data_center(net)
+                logger.debug(f"Loading {station}@{dc} - {day.strftime('%Y.%j')}")
                 stream = obspy.Stream()
-                for channel in self.channels:
-                    for uri in self._generate_waveform_uris(station, channel[:2], day):
-                        if uri in avail_uri:
-                            stream += await asyncio.to_thread(
-                                self._read_waveform_from_s3, fs, uri
-                            )
-                    if len(stream) > 0:
-                        break
+
+                if dc in ["scedc", "ncedc"]:
+                    for channel in self.channels:
+                        for uri in self._generate_waveform_uris(
+                            net, sta, loc, channel[:2], day
+                        ):
+                            if uri in avail_uri[net]:
+                                stream += await asyncio.to_thread(
+                                    self._read_waveform_from_s3, fs, uri
+                                )
+                        if len(stream) > 0:
+                            break
+                elif dc == "earthscope":
+                    # use the first one: they should be all same
+                    r = self._generate_waveform_uris(net, sta, loc, "NA", day)[0]
+                    # earthscope object name has version number
+                    # use re to match the object
+                    uri = list(filter(lambda v: re.match(r, v), avail_uri[net]))[0]
+                    s = await asyncio.to_thread(self._read_waveform_from_s3, fs, uri)
+                    for channel in self.channels:
+                        stream += s.select(channel=channel)
+                else:
+                    raise NotImplemented
 
                 if len(stream) > 0:
                     yield stream
                 else:
-                    logger.debug(f"Empty stream {station} - {day}")
+                    logger.debug(f"Empty stream {station}@{dc} - {day}")
 
     def get_available_stations(self) -> pd.DataFrame:
         """
@@ -362,13 +380,12 @@ class S3DataSource:
                 return obspy.Stream()
 
     def _generate_waveform_uris(
-        self, station: str, cha: str, date: datetime.date
+        self, net: str, sta: str, loc: str, cha: str, date: datetime.date
     ) -> list[str]:
         """
         Generates a list of S3 uris for the requested data
         """
         uris = []
-        net, sta, loc = station.split(".")
         year = date.strftime("%Y")
         day = date.strftime("%j")
         for c in self.components:

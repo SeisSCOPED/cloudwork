@@ -15,7 +15,7 @@ NETWORK_MAPPING = {
     "RE": "ncedc",
     "SB": "ncedc",
     "SF": "ncedc",
-    "TA": "ncedc",
+    "TA": "earthscope",
     "UO": "ncedc",
     "US": "ncedc",
     "UW": "ncedc",
