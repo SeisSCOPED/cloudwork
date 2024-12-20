@@ -368,10 +368,13 @@ class S3DataSource:
             try:
                 buff = io.BytesIO(fs.read_bytes(uri))
                 return obspy.read(buff)
+            except OSError as e:
+                if e.errno == 5:
+                    logger.debug(f"Not authorized to access.")
+                else:
+                    logger.debug(e.strerror)
             except ClientError:
-                logger.debug(
-                    f"Getting S3 ClientError. Resting for 5 seconds and retry."
-                )
+                logger.debug(f"Getting S3 ClientError. Sleep for 5 seconds and retry.")
                 time.sleep(5)
             except FileNotFoundError:  # File does not exist
                 return obspy.Stream()
