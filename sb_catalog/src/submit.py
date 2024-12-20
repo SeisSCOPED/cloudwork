@@ -4,13 +4,14 @@ import logging
 
 import boto3
 import numpy as np
+from botocore.config import Config
 
 from .parameters import JOB_DEFINITION_ASSOCIATION, JOB_DEFINITION_PICKING, JOB_QUEUE
-from .util import SeisBenchDatabase, filter_station_by_start_end_date
+from .utils import SeisBenchDatabase, filter_station_by_start_end_date
 
 logger = logging.getLogger("sb_picker")
 handler = logging.StreamHandler()
-formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+formatter = logging.Formatter("%(asctime)s | %(name)s | %(levelname)s | %(message)s")
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 logger.setLevel(logging.DEBUG)
@@ -25,6 +26,7 @@ class SubmitHelper:
     :param start: Start date
     :param end: End date
     :param extent: Study area (minlat, maxlat, minlon, maxlon)
+    :param region: AWS region to run jobs
     :param station_group_size: Number of stations to process in a single picking job
     :param day_group_size: Number of days to process in a single picking/association job
     """
@@ -35,6 +37,7 @@ class SubmitHelper:
         end: datetime.datetime,
         extent: tuple[float, float, float, float],
         db: SeisBenchDatabase,
+        region: str,
         station_group_size: int = 40,
         day_group_size: int = 10,
     ):
@@ -42,9 +45,11 @@ class SubmitHelper:
         self.end = end
         self.extent = extent
         self.db = db
+        self.region = region
         self.station_group_size = station_group_size
         self.day_group_size = day_group_size
-        self.client = boto3.client("batch")
+
+        self.client = boto3.client("batch", config=Config(region_name=region))
         self.shared_parameters = {
             "db_uri": self.db.db_uri,
             "database": self.db.database.name,
@@ -85,14 +90,14 @@ class SubmitHelper:
                 parameters = {"start": day0, "end": day1, "stations": sub_stations}
 
                 logger.debug(f"Submitting pick job with: {parameters}")
-                pick_jobs.append(
-                    self.client.submit_job(
-                        jobName=f"picking_{i}_{j}",
-                        jobQueue=JOB_QUEUE,
-                        jobDefinition=JOB_DEFINITION_PICKING,
-                        parameters={**parameters, **self.shared_parameters},
-                    )
-                )
+                # pick_jobs.append(
+                #     self.client.submit_job(
+                #         jobName=f"picking_{i}_{j}",
+                #         jobQueue=JOB_QUEUE,
+                #         jobDefinition=JOB_DEFINITION_PICKING,
+                #         parameters={**parameters, **self.shared_parameters},
+                #     )
+                # )
 
                 j += self.day_group_size
             i += self.station_group_size
@@ -161,6 +166,9 @@ def main():
     parser.add_argument(
         "--database", type=str, default="tutorial", help="MongoDB database name."
     )
+    parser.add_argument(
+        "--region", type=str, default="us-east-2", help="Working region on AWS."
+    )
 
     args = parser.parse_args()
 
@@ -168,7 +176,9 @@ def main():
     assert len(extent) == 4, "Extent needs to be exactly 4 coordinates"
 
     db = SeisBenchDatabase(args.db_uri, args.database)
-    helper = SubmitHelper(start=args.start, end=args.end, extent=extent, db=db)
+    helper = SubmitHelper(
+        start=args.start, end=args.end, extent=extent, db=db, region=args.region
+    )
     helper.submit_jobs(args.command)
 
 

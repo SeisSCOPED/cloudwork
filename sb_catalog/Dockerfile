@@ -5,18 +5,20 @@ FROM python:3.12
 WORKDIR /code
 
 # install dependencies
-# pytorch CPU
+# pytorch-cpu
 RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
 # SeisBench
 RUN pip install seisbench pyocto ipython s3fs pymongo boto3 tqdm
 
-# Get AWS DocumentDB public key
+# get AWS DocumentDB public key
 RUN wget https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
 
 # copy the content of the local src directory to the working directory
 COPY src/ src/
 
-# !!!TEMPORARY!!! load models from Jannes personal data repo.
+# TODO !!!TEMPORARY!!! load model weights from Jannes personal data repo.
+# We may only include those needed
 RUN wget https://munchmeyer.de/data/sbmodels_v3_230614.tgz \
     && mkdir models \
     && mkdir -p /root/.seisbench/models/v3/  \

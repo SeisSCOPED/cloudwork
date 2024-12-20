@@ -55,6 +55,9 @@ class SeisBenchDatabase(pymongo.MongoClient):
 
         return pd.DataFrame(list(cursor))
 
+    def write_stations(self, stations: pd.DataFrame) -> None:
+        self.insert_many_ignore_duplicates("stations", stations.to_dict("records"))
+
     def insert_many_ignore_duplicates(
         self, key: str, entries: list[dict[str, Any]]
     ) -> InsertManyResult:
@@ -93,51 +96,3 @@ def filter_station_by_start_end_date(
 
 def parse_year_day(x: str) -> datetime.date:
     return datetime.datetime.strptime(x, "%Y.%j").date()
-
-
-def s3_path_mapper(net, sta, loc, cha, year, day, c) -> str:
-    try:
-        s3 = network_mapper[net]
-    except KeyError:
-        raise NotImplementedError(f"Network {net} not implemented. Check src.util.")
-    prefix = _prefix_mapper(s3, net, year, day)
-    basename = _basename_mapper(s3, net, sta, loc, cha, year, day, c)
-    return f"{prefix}{basename}"
-
-
-def _prefix_mapper(s3, net, year, day) -> str:
-    if s3 == "ncedc-pds":
-        return f"{s3}/continuous_waveforms/{net}/{year}/{year}.{day}/"
-    elif s3 == "scedc-pds":
-        return f"{s3}/continuous_waveforms/{year}/{year}_{day}/"
-
-
-def _basename_mapper(s3, net, sta, loc, cha, year, day, c) -> str:
-    if s3 == "ncedc-pds":
-        return f"{sta}.{net}.{cha}{c}.{loc}.D.{year}.{day}"
-    elif s3 == "scedc-pds":
-        return f"{net}{sta.ljust(5, '_')}{cha}{c}{loc.ljust(3, '_')}{year}{day}.ms"
-
-
-network_mapper = {
-    "AZ": "scedc-pds",
-    "CI": "scedc-pds",
-    "BK": "ncedc-pds",
-    "CC": "ncedc-pds",
-    "CE": "ncedc-pds",
-    "GM": "ncedc-pds",
-    "GS": "ncedc-pds",
-    "NC": "ncedc-pds",
-    "NN": "ncedc-pds",
-    "NP": "ncedc-pds",
-    "PB": "ncedc-pds",
-    "PG": "ncedc-pds",
-    "RE": "ncedc-pds",
-    "SB": "ncedc-pds",
-    "SF": "ncedc-pds",
-    "TA": "ncedc-pds",
-    "UO": "ncedc-pds",
-    "US": "ncedc-pds",
-    "UW": "ncedc-pds",
-    "WR": "ncedc-pds",
-}

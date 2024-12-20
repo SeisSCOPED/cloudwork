@@ -7,7 +7,7 @@ import argparse
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from .util import SeisBenchDatabase
+from .utils import SeisBenchDatabase
 
 
 def main():

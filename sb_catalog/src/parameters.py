@@ -1,3 +1,8 @@
-JOB_QUEUE = ""  # Required
-JOB_DEFINITION_PICKING = ""  # [REQUIRED]
-JOB_DEFINITION_ASSOCIATION = ""  # [REQUIRED]
+"""
+Parameter for cloud job submission and DocumentDB access. All parameters are required.
+"""
+
+# Required by Batch job submission
+JOB_QUEUE = ""
+JOB_DEFINITION_PICKING = ""
+JOB_DEFINITION_ASSOCIATION = ""

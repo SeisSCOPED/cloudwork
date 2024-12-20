@@ -2,7 +2,9 @@ import argparse
 import asyncio
 import datetime
 import functools
+import io
 import itertools
+import json
 import logging
 import re
 import time
@@ -20,13 +22,9 @@ from bson import ObjectId
 from s3fs import S3FileSystem
 from tqdm import tqdm
 
-from .util import (
-    SeisBenchDatabase,
-    _prefix_mapper,
-    network_mapper,
-    parse_year_day,
-    s3_path_mapper,
-)
+from .constants import NETWORK_MAPPING
+from .s3_helper import CompositeS3ObjectHelper
+from .utils import SeisBenchDatabase, parse_year_day
 
 logger = logging.getLogger("sb_picker")
 
@@ -105,6 +103,9 @@ def main() -> None:
         help="Buffer size for picking results.",
     )
     parser.add_argument(
+        "--credential", default="", type=str, help="Path to AWS credential"
+    )
+    parser.add_argument(
         "--delay", default=30, type=int, help="Add random delay when starting the job."
     )
     parser.add_argument(
@@ -115,7 +116,7 @@ def main() -> None:
     if args.debug:  # Setup debug logging
         handler = logging.StreamHandler()
         formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            "%(asctime)s | %(name)s | %(levelname)s | %(message)s"
         )
         handler.setFormatter(formatter)
         logger.addHandler(handler)
@@ -128,6 +129,7 @@ def main() -> None:
         start=args.start,
         end=args.end,
         components=args.components,
+        credential=args.credential,
     )
     if args.extent is None:
         extent = None
@@ -154,11 +156,12 @@ def main() -> None:
         time.sleep(delay)
         picker.run_picking()
     elif args.command == "station_list":
+        logger.warning(
+            f"This operation could be very expensive. It is recommended to use metadata service instead."
+        )
         picker.run_station_listing()
     elif args.command == "associate":
         picker.run_association(args.start, args.end)
-    elif args.command == "pick_jobs":
-        picker.get_pick_jobs()
     else:
         raise ValueError(f"Unknown command '{args.command}'")
 
@@ -175,11 +178,11 @@ class S3DataSource:
         stations: Optional[str] = None,
         components: str = "ZNE12",
         channels: str = "HH?,BH?,EH?,HN?,BN?,EN?,HL?,BL?,EL?",
+        credential: str = "",
     ):
         self.start = start
         self.end = end
         self.components = components
-        self.s3s = list(set(network_mapper.values()))
         if stations is None:
             self.stations = []
             self.networks = []
@@ -187,6 +190,18 @@ class S3DataSource:
             self.stations = stations.split(",")
             self.networks = list(set([s.split(".")[0] for s in self.stations]))
         self.channels = channels.split(",")
+
+        # Load AWS credential
+        if credential:
+            with open(credential, "r") as f:
+                self.credential = json.load(f)
+                logger.debug(
+                    f"EarthScope credential expire at {self.credential['expiration']}"
+                )
+        else:
+            self.credential = None
+
+        self.s3helper = CompositeS3ObjectHelper(self.credential)
 
     async def load_waveforms(self) -> AsyncIterator[obspy.Stream]:
         """
@@ -197,18 +212,19 @@ class S3DataSource:
         This matches the typical access pattern required for single-station phase pickers.
         """
         days = np.arange(self.start, self.end, datetime.timedelta(days=1))
-        fs = S3FileSystem(anon=True)
 
         for day in days:
             day = day.astype(datetime.datetime)
 
             # get a list of exist uri
-            # fs.ls can be slow, but it merges many small fs.open request
+            # ls can be slow, but it merges many small open request
             # and reduced the total number of requests
             avail_uri = []
             for net in self.networks:
-                s3 = network_mapper[net]
-                prefix = _prefix_mapper(s3, net, day.strftime("%Y"), day.strftime("%j"))
+                fs = self.s3helper.get_fs(net)
+                prefix = self.s3helper.get_prefix(
+                    net, day.strftime("%Y"), day.strftime("%j")
+                )
                 try:
                     avail_uri += fs.ls(prefix)
                 except FileNotFoundError:
@@ -237,10 +253,11 @@ class S3DataSource:
         List all stations available in the S3 bucket by scanning the StationXML files.
         Returns station list as a dataframe.
         """
-        fs = S3FileSystem(anon=True)
-
         station_uris = []
-        for s3 in self.s3s:
+        for s3 in self.s3helper.s3:
+            if s3 == "earthscope":
+                continue
+            fs = self.s3helper.fs[s3]
             logger.debug(f"Listing StationXML URIs from {s3}.")
             networks = fs.ls(f"{s3}/FDSNstationXML/")
             for net in networks:
@@ -248,12 +265,10 @@ class S3DataSource:
                 if len(net.split("/")[-1]) == 2:
                     station_uris += fs.ls(net)[1:]
 
-        logger.debug(
-            "Reading and parsing all station inventories. This may take some time..."
-        )
         stations = []
         for uri in tqdm(station_uris, total=len(station_uris)):
-            with fs.open(uri) as f:
+            # TODO this needs to be updated for s3helper
+            with self.fs.open(uri) as f:
                 inv = obspy.read_inventory(f)
 
             for net in inv:
@@ -334,8 +349,8 @@ class S3DataSource:
         """
         while True:
             try:
-                with fs.open(uri) as f:
-                    return obspy.read(f)
+                buff = io.BytesIO(fs.read_bytes(uri))
+                return obspy.read(buff)
             except ClientError:
                 logger.debug(
                     f"Getting S3 ClientError. Resting for 5 seconds and retry."
@@ -358,7 +373,7 @@ class S3DataSource:
         day = date.strftime("%j")
         for c in self.components:
             # go through all possible components...
-            uris.append(s3_path_mapper(net, sta, loc, cha, year, day, c))
+            uris.append(self.s3helper.get_s3_path(net, sta, loc, cha, year, day, c))
 
         return uris
 
@@ -694,15 +709,6 @@ class S3MongoSBBridge:
         return self.db.database["pick_records"].find_one(
             {"trace_id": station, "year": day.year, "doy": int(day.strftime("%-j"))}
         )
-
-    def get_pick_jobs(self) -> None:
-        """
-        Lists the available stations in an area and prints them
-        :return:
-        """
-        stations = self.db.get_stations(self.extent)
-        logger.debug(f"Found {len(stations)} jobs")
-        print(",".join(stations["id"]))
 
 
 if __name__ == "__main__":
