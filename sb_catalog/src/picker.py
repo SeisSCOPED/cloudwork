@@ -361,8 +361,14 @@ class S3DataSource:
     @staticmethod
     def _read_waveform_from_s3(fs, uri) -> obspy.Stream:
         """
-        Failure tolerant method for reading data from S3. If an error occurs, an empty stream is returned.
-        Unless the error is because of S3 overloaded, the job will sleep for 5 seconds and retry.
+        Failure tolerant method for reading data from S3.
+
+        OSError#5: accessing non-authorized earthscope data. return empty stream.
+        PermissionError: EarthScope token expired. Raise error as all following jobs will fail.
+        ClientError: S3 overloaded, the job will sleep for 5 seconds and retry until return.
+        FileNotFoundError: file not exist.
+        ValueError: certain types of corrupt files
+
         """
         while True:
             try:
@@ -370,16 +376,18 @@ class S3DataSource:
                 return obspy.read(buff)
             except OSError as e:
                 if e.errno == 5:
-                    logger.debug(f"Not authorized to access.")
-                else:
-                    logger.debug(e.strerror)
-                return obspy.Stream()
+                    logger.debug(f"Not authorized to access the resource.")
+                    return obspy.Stream()
+            except PermissionError as e:
+                # TODO: check the stderr that this is a token issue
+                logger.debug(e.args[0])
+                raise e
             except ClientError:
-                logger.debug(f"Getting S3 ClientError. Sleep for 5 seconds and retry.")
+                logger.debug(f"S3 might be busy. Sleep for 5 seconds and retry.")
                 time.sleep(5)
-            except FileNotFoundError:  # File does not exist
+            except FileNotFoundError:
                 return obspy.Stream()
-            except ValueError:  # Raised for certain types of corrupt files
+            except ValueError:
                 return obspy.Stream()
 
     def _generate_waveform_uris(
