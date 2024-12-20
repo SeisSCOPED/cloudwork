@@ -230,6 +230,9 @@ class S3DataSource:
                 except FileNotFoundError:
                     logging.debug(f"Path does not exist {prefix}")
                     pass
+                except PermissionError as e:
+                    logger.debug(e.args[0])
+                    raise e
 
             for station in self.stations:
                 net, sta, loc = station.split(".")
@@ -379,7 +382,6 @@ class S3DataSource:
                     logger.debug(f"Not authorized to access the resource.")
                     return obspy.Stream()
             except PermissionError as e:
-                # TODO: check the stderr that this is a token issue
                 logger.debug(e.args[0])
                 raise e
             except ClientError:
