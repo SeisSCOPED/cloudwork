@@ -1,6 +1,5 @@
 """
-Parse stations from csv file and
-initialize the MongoDB / DocumentDB
+Parse stations from csv file and upload to the MongoDB
 """
 
 import argparse
@@ -8,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .util import SeisBenchDatabase
+from .utils import SeisBenchDatabase
 
 
 def main():
@@ -25,13 +24,8 @@ def main():
     args = parser.parse_args()
 
     stations = pd.read_csv(args.path)
-    write_stations(stations, args.db_uri, args.database)
-
-
-def write_stations(stations: pd.DataFrame, db_uri: str, database: str) -> None:
-    db = SeisBenchDatabase(db_uri, database)
-
-    db.insert_many_ignore_duplicates("stations", stations.to_dict("records"))
+    db = SeisBenchDatabase(args.db_uri, args.database)
+    db.write_stations(stations)
 
 
 if __name__ == "__main__":
