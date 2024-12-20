@@ -72,9 +72,9 @@ class CompositeS3ObjectHelper(S3ObjectHelper):
         }
         if credential:
             self.fs["earthscope"] = S3FileSystem(
-                key=credential["aws_access_key_id"],
-                secret=credential["aws_secret_access_key"],
-                token=credential["aws_session_token"],
+                key=credential["earthscope_aws_access_key_id"],
+                secret=credential["earthscope_aws_secret_access_key"],
+                token=credential["earthscope_aws_session_token"],
             )
 
     def get_prefix(self, net, year, day) -> str:

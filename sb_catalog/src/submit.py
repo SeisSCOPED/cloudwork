@@ -1,5 +1,6 @@
 import argparse
 import datetime
+import json
 import logging
 
 import boto3
@@ -38,6 +39,7 @@ class SubmitHelper:
         extent: tuple[float, float, float, float],
         db: SeisBenchDatabase,
         region: str,
+        credential: dict = {},
         station_group_size: int = 40,
         day_group_size: int = 10,
     ):
@@ -46,6 +48,7 @@ class SubmitHelper:
         self.extent = extent
         self.db = db
         self.region = region
+        self.credential = credential
         self.station_group_size = station_group_size
         self.day_group_size = day_group_size
 
@@ -90,14 +93,18 @@ class SubmitHelper:
                 parameters = {"start": day0, "end": day1, "stations": sub_stations}
 
                 logger.debug(f"Submitting pick job with: {parameters}")
-                # pick_jobs.append(
-                #     self.client.submit_job(
-                #         jobName=f"picking_{i}_{j}",
-                #         jobQueue=JOB_QUEUE,
-                #         jobDefinition=JOB_DEFINITION_PICKING,
-                #         parameters={**parameters, **self.shared_parameters},
-                #     )
-                # )
+                pick_jobs.append(
+                    self.client.submit_job(
+                        jobName=f"picking_{i}_{j}",
+                        jobQueue=JOB_QUEUE,
+                        jobDefinition=JOB_DEFINITION_PICKING,
+                        parameters={
+                            **parameters,
+                            **self.shared_parameters,
+                            **self.credential,
+                        },
+                    )
+                )
 
                 j += self.day_group_size
             i += self.station_group_size
@@ -169,15 +176,28 @@ def main():
     parser.add_argument(
         "--region", type=str, default="us-east-2", help="Working region on AWS."
     )
-
+    parser.add_argument(
+        "--credential", default="", type=str, help="Path to AWS credential"
+    )
     args = parser.parse_args()
 
     extent = tuple([float(x) for x in args.extent.split(",")])
     assert len(extent) == 4, "Extent needs to be exactly 4 coordinates"
 
+    if args.credential:
+        with open(args.credential, "r") as f:
+            credential = json.load(f)
+    else:
+        credential = {}
+
     db = SeisBenchDatabase(args.db_uri, args.database)
     helper = SubmitHelper(
-        start=args.start, end=args.end, extent=extent, db=db, region=args.region
+        start=args.start,
+        end=args.end,
+        extent=extent,
+        db=db,
+        region=args.region,
+        credential=credential,
     )
     helper.submit_jobs(args.command)
 

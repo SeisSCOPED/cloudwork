@@ -4,8 +4,8 @@ import datetime
 import functools
 import io
 import itertools
-import json
 import logging
+import os
 import re
 import time
 from typing import Any, AsyncIterator, Optional
@@ -101,9 +101,6 @@ def main() -> None:
         help="Buffer size for picking results.",
     )
     parser.add_argument(
-        "--credential", default="", type=str, help="Path to AWS credential"
-    )
-    parser.add_argument(
         "--delay", default=30, type=int, help="Add random delay when starting the job."
     )
     parser.add_argument(
@@ -176,7 +173,6 @@ class S3DataSource:
         stations: Optional[str] = None,
         components: str = "ZNE12",
         channels: str = "HH?,BH?,EH?,HN?,BN?,EN?,HL?,BL?,EL?",
-        credential: str = "",
     ):
         self.start = start
         self.end = end
@@ -188,18 +184,9 @@ class S3DataSource:
             self.stations = stations.split(",")
             self.networks = list(set([s.split(".")[0] for s in self.stations]))
         self.channels = channels.split(",")
-
-        # Load AWS credential
-        if credential:
-            with open(credential, "r") as f:
-                self.credential = json.load(f)
-                logger.debug(
-                    f"EarthScope credential expire at UTC {self.credential['expiration']}"
-                )
-        else:
-            self.credential = None
-
+        self.credential = self.get_credential()
         self.s3helper = CompositeS3ObjectHelper(self.credential)
+        logger.debug(f"Initializing s3 access to {', '.join(self.s3helper.fs.keys())}")
 
     async def load_waveforms(self) -> AsyncIterator[obspy.Stream]:
         """
@@ -228,7 +215,7 @@ class S3DataSource:
                 try:
                     avail_uri[net] += fs.ls(prefix)
                 except FileNotFoundError:
-                    logging.debug(f"Path does not exist {prefix}")
+                    logger.debug(f"Path does not exist {prefix}")
                     pass
                 except PermissionError as e:
                     logger.debug(e.args[0])
@@ -379,7 +366,7 @@ class S3DataSource:
                 return obspy.read(buff)
             except OSError as e:
                 if e.errno == 5:
-                    logger.debug(f"Not authorized to access the resource.")
+                    logger.debug(f"Not authorized to access this resource.")
                     return obspy.Stream()
             except PermissionError as e:
                 logger.debug(e.args[0])
@@ -406,6 +393,25 @@ class S3DataSource:
             uris.append(self.s3helper.get_s3_path(net, sta, loc, cha, year, day, c))
 
         return uris
+
+    def get_credential(self) -> dict:
+        """
+        Get credentials from environment varibale. Set during job submission.
+        """
+        cred = {}
+        try:
+            cred["earthscope_aws_access_key_id"] = os.environ[
+                "earthscope_aws_access_key_id"
+            ]
+            cred["earthscope_aws_secret_access_key"] = os.environ[
+                "earthscope_aws_secret_access_key"
+            ]
+            cred["earthscope_aws_session_token"] = os.environ[
+                "earthscope_aws_session_token"
+            ]
+        except KeyError:
+            pass
+        return cred
 
 
 class S3MongoSBBridge:
