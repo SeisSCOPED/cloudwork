@@ -7,12 +7,7 @@ import boto3
 import numpy as np
 from botocore.config import Config
 
-from .parameters import (
-    EARTHSCOPE_S3_ACCESS_POINT,
-    JOB_DEFINITION_ASSOCIATION,
-    JOB_DEFINITION_PICKING,
-    JOB_QUEUE,
-)
+from .parameters import JOB_DEFINITION_ASSOCIATION, JOB_DEFINITION_PICKING, JOB_QUEUE
 from .utils import SeisBenchDatabase, filter_station_by_start_end_date
 
 logger = logging.getLogger("sb_picker")
@@ -190,6 +185,9 @@ def main():
     parser.add_argument(
         "--credential", default="", type=str, help="Path to AWS credential"
     )
+    parser.add_argument(
+        "--access_point", default="", type=str, help="EarthScope S3 access point"
+    )
     args = parser.parse_args()
 
     extent = tuple([float(x) for x in args.extent.split(",")])
@@ -200,7 +198,7 @@ def main():
             cred = json.load(f)
             logger.warning(f"Token expires at UTC {cred['expiration']}")
             credential = {"earthscope_" + k: v for k, v in cred.items()}
-            credential["EARTHSCOPE_S3_ACCESS_POINT"] = EARTHSCOPE_S3_ACCESS_POINT
+            credential["EARTHSCOPE_S3_ACCESS_POINT"] = args.access_point
     else:
         credential = {}
 

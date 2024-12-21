@@ -242,10 +242,13 @@ class S3DataSource:
                     # use the first one: they should be all same
                     r = self._generate_waveform_uris(net, sta, loc, "NA", day)[0]
                     # earthscope object name has version number
-                    uri = list(filter(lambda v: re.match(r, v), avail_uri[net]))[0]
-                    s = await asyncio.to_thread(self._read_waveform_from_s3, fs, uri)
-                    for channel in self.channels:
-                        stream += s.select(channel=channel)
+                    uri = list(filter(lambda v: re.match(r, v), avail_uri[net]))
+                    if len(uri) > 0:
+                        s = await asyncio.to_thread(
+                            self._read_waveform_from_s3, fs, uri
+                        )
+                        for channel in self.channels:
+                            stream += s.select(channel=channel)
                 else:
                     raise NotImplemented
 
