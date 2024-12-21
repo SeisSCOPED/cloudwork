@@ -102,7 +102,12 @@ class SubmitHelper:
                         parameters={
                             **parameters,
                             **self.shared_parameters,
-                            **self.credential,
+                        },
+                        containerOverrides={
+                            "environment": [
+                                {"name": k, "value": v}
+                                for k, v in self.credential.items()
+                            ]
                         },
                     )
                 )
@@ -187,10 +192,9 @@ def main():
 
     if args.credential:
         with open(args.credential, "r") as f:
-            credential = json.load(f)
-            logger.warning(
-                f"EarthScope token expires at UTC {credential['expiration']}"
-            )
+            cred = json.load(f)
+            logger.warning(f"EarthScope token expires at UTC {cred['expiration']}")
+            credential = {"earthscope_" + k: v for k, v in cred.items()}
     else:
         credential = {}
 
