@@ -124,7 +124,6 @@ def main() -> None:
         start=args.start,
         end=args.end,
         components=args.components,
-        credential=args.credential,
     )
     if args.extent is None:
         extent = None
@@ -396,7 +395,7 @@ class S3DataSource:
 
     def get_credential(self) -> dict:
         """
-        Get credentials from environment varibale. Set during job submission.
+        Get credentials from environment variables. Set during job submission.
         """
         cred = {}
         try:

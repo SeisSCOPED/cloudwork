@@ -74,6 +74,7 @@ class SubmitHelper:
         logger.debug(
             f"Starting picking jobs for {len(stations)} stations and {len(days)} days"
         )
+        logger.debug(f"Submitting jobs with shared variables: {self.shared_parameters}")
 
         i = 0
         while i < len(stations) - 1:
@@ -92,7 +93,7 @@ class SubmitHelper:
                 )
                 parameters = {"start": day0, "end": day1, "stations": sub_stations}
 
-                logger.debug(f"Submitting pick job with: {parameters}")
+                logger.debug(f"Submitting picking job: {parameters}")
                 pick_jobs.append(
                     self.client.submit_job(
                         jobName=f"picking_{i}_{j}",
@@ -187,6 +188,9 @@ def main():
     if args.credential:
         with open(args.credential, "r") as f:
             credential = json.load(f)
+            logger.warning(
+                f"EarthScope token expires at UTC {credential['expiration']}"
+            )
     else:
         credential = {}
 
