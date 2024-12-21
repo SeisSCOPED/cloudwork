@@ -1,9 +1,11 @@
+import os
 from abc import abstractmethod
 
 from s3fs import S3FileSystem
 
 from .constants import NETWORK_MAPPING
-from .parameters import EARTHSCOPE_S3_ACCESS_POINT
+
+EARTHSCOPE_S3_ACCESS_POINT = os.environ["EARTHSCOPE_S3_ACCESS_POINT"]
 
 
 class S3ObjectHelper:

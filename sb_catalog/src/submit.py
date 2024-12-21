@@ -7,7 +7,12 @@ import boto3
 import numpy as np
 from botocore.config import Config
 
-from .parameters import JOB_DEFINITION_ASSOCIATION, JOB_DEFINITION_PICKING, JOB_QUEUE
+from .parameters import (
+    EARTHSCOPE_S3_ACCESS_POINT,
+    JOB_DEFINITION_ASSOCIATION,
+    JOB_DEFINITION_PICKING,
+    JOB_QUEUE,
+)
 from .utils import SeisBenchDatabase, filter_station_by_start_end_date
 
 logger = logging.getLogger("sb_picker")
@@ -193,8 +198,9 @@ def main():
     if args.credential:
         with open(args.credential, "r") as f:
             cred = json.load(f)
-            logger.warning(f"EarthScope token expires at UTC {cred['expiration']}")
+            logger.warning(f"Token expires at UTC {cred['expiration']}")
             credential = {"earthscope_" + k: v for k, v in cred.items()}
+            credential["EARTHSCOPE_S3_ACCESS_POINT"] = EARTHSCOPE_S3_ACCESS_POINT
     else:
         credential = {}
 
