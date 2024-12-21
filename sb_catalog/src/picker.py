@@ -245,7 +245,7 @@ class S3DataSource:
                     uri = list(filter(lambda v: re.match(r, v), avail_uri[net]))
                     if len(uri) > 0:
                         s = await asyncio.to_thread(
-                            self._read_waveform_from_s3, fs, uri
+                            self._read_waveform_from_s3, fs, uri[0]
                         )
                         for channel in self.channels:
                             stream += s.select(channel=channel)
